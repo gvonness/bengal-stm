@@ -1,0 +1,14 @@
+target
+/*/*.iml
+/.idea
+/.idea_modules
+/.project
+/.settings
+/.bsp
+/src/main/resources/dataDecrypted/
+/src/main/results/*.numbers
+/src/main/results/*.xlsx
+/src/main/results/*/*.png
+/doc/*.aux
+/doc/*.log
+/doc/*.synctex.gz
