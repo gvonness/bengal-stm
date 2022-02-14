@@ -42,7 +42,7 @@ private[stm] trait TxnApiContext[F[_]] {
     else
       liftFailure(TxnRetry)
 
-  def raiseError(ex: Throwable): Txn[Unit] =
+  def abort(ex: Throwable): Txn[Unit] =
     liftFailure(TxnError(ex))
 
   private[stm] def handleErrorWithInternal[V](fa: Txn[V])(

@@ -35,7 +35,7 @@ class StmApiSpec extends AnyFlatSpec {
     import stm._
 
     val errorTxn: Txn[Unit] =
-      stm.raiseError(new RuntimeException("test error"))
+      stm.abort(new RuntimeException("test error"))
 
     assertThrows[RuntimeException] {
       errorTxn.commit.unsafeRunSync()
@@ -49,7 +49,7 @@ class StmApiSpec extends AnyFlatSpec {
 
     assertResult(mockError.getMessage) {
       stm
-        .raiseError(mockError)
+        .abort(mockError)
         .flatMap(_ => stm.pure("test"))
         .handleErrorWith(ex => stm.pure(ex.getMessage))
         .commit
@@ -68,7 +68,7 @@ class StmApiSpec extends AnyFlatSpec {
       (for {
         result <- tVarMap.get("foo")
         _      <- tVarMap.modify("foo", _ + 3)
-        _      <- stm.raiseError(new RuntimeException("fake exception"))
+        _      <- stm.abort(new RuntimeException("fake exception"))
         _      <- tVarMap.modify("foo", _ + 2)
       } yield result).handleErrorWith { _ =>
         for {

@@ -36,7 +36,16 @@ idePackagePrefix := Some("ai.entrolution")
 
 scalacOptions ++= Seq(
   "-deprecation",
-  "-feature"
+  "-feature",
+  "-unchecked",
+  "-encoding",
+  "UTF-8",
+  "-Xlint:_",
+  "-Xlint:-byname-implicit",
+  "-Ywarn-unused:-implicits",
+  "-Ywarn-value-discard",
+  "-Ywarn-dead-code",
+  "-Ymacro-annotations"
 )
 
 enablePlugins(SonatypeCiReleasePlugin)
