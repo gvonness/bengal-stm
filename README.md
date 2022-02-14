@@ -2,7 +2,6 @@
 
 # Bengal STM
 ![Build Status](https://github.com/gvonness/bengal-stm/actions/workflows/build.yml/badge.svg)
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/ai.entrolution/bengal-stm/badge.svg?style=plastic&logo=apachemaven&color=6F00FF)](https://maven-badges.herokuapp.com/maven-central/ai.entrolution/bengal-stm/)
 
 Bengal STM is a library for writing composable concurrency operations based on in-memory transactions. The library itself handles all aspects of concurrency management including locking, retries, semantic blocking and optimised transaction scheduling. Generally, STM is a higher-level concurrency abstraction that provides a safe, efficient and composable alternate to locks, mutexes, etc. 
 
