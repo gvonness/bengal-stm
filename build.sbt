@@ -16,6 +16,9 @@ ThisBuild / scmInfo := Some(
 ThisBuild / spiewakCiReleaseSnapshots := false
 ThisBuild / spiewakMainBranches := Seq("main")
 
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
+
 name := "bengal-stm"
 
 version := "0.1.0"
