@@ -110,19 +110,19 @@ object Main extends IOApp.Simple {
 
 ## PR FAQ
 ### What is a PR FAQ?
-Take a look at [the Medium article on PR FAQs](https://medium.com/agileinsider/press-releases-for-product-managers-everything-you-need-to-know-942485961e31) for a good overview of the concept. I have taken some liberties with the formatting; but I generally like the concept of a living FAQ to help introduce products.
+Take a look at [the Medium article on PR FAQs](https://medium.com/agileinsider/press-releases-for-product-managers-everything-you-need-to-know-942485961e31) for a good overview of the concept. I have taken some liberties with the formatting, but I generally like the concept of a living FAQ to help introduce products.
 
 ### Why another STM implementation?
-I found that blindly optimistic execution strategies lead to very poor performance of STM in a number of production scenarios. The situation could only be remedied by sequentially executing queued transactions within a given runtime. I.e. the transactional nature of STM became moot, as I was essentially reducing concurrent execution back down to sequential execution. Thus, I decided to build an STM back by a scheduler that was more conducive to handling high-contention scenarios, while still being genuinely concurrent. 
+I found that blindly optimistic execution strategies led to very poor performance of STM in a number of production scenarios. The situation could only be remedied by sequentially executing queued transactions within a given runtime. I.e. the transactional nature of STM became moot, as I was essentially reducing concurrent execution back down to sequential execution. Thus, I decided to build an STM backed by a scheduler that was more conducive to handling high-contention scenarios, while still being genuinely concurrent. 
 
-Beyond the scheduler, I also wanted to explore adding in a `Map` as a fundamental transactional data structure to analogise the concept of an index in a DB. This presents some interesting challenges with scheduling around structural (i.e. the 'CRD' in 'CRUD') updates to the map itself, but it's a data structure I just found to be very useful in transactional contexts.
+Beyond the scheduler, I also wanted to explore adding `Map` as a fundamental transactional data structure to analogise the concept of an index in a DB. This presents some interesting challenges with scheduling around structural (i.e. the 'CRD' in 'CRUD') updates to the map itself, but it's a data structure I just found to be very useful in transactional contexts.
 
 ### Why not just contribute to another project?
 Indeed, [cats-stm](https://timwspence.github.io/cats-stm/) already exists and provides a nice STM implementation for Cats Effect (Try it!).
 
-Given the requirements I had for the transaction scheduler, I decided that the underpinning implementation would be quite different than cats-stm. In particular, this implementation is based on [Free Monads](https://typelevel.org/cats/datatypes/freemonad.html) that use different compilers/interpreters for static analysis and building the transactional log. 
+Given the requirements I had for the transaction scheduler, I decided that the underpinning implementation would be quite different than cats-stm. In particular, this implementation is based on [Free Monads](https://typelevel.org/cats/datatypes/freemonad.html) that use different interpreters for static analysis and building the transactional log. 
 
 Also, while APIs are quite similar, there are some differences between Bengal and cats-stm. For example, cats-stm has a way to bypass retries with `orElse`, which is not something present in Bengal (this is an intentional design decision). Also, initialisation of `TxnVar` and `TxnVarMap` happen outside the context of the `Txn[_]` monad.
 
 ### Why isn't there a way to bypass `waitFor`?
-I wanted to keep the API `waitFor` to have a clear semantic delineation from an `if` statement in the monadic construction. While there is arguably a missed opportunity to define a canonical Semigroup via such a bypass, I have opted for a simpler API (for the time being).
+I wanted `waitFor` to have a clear semantic delineation from an `if` statement in the monadic construction. While there is arguably a missed opportunity to define a canonical Semigroup via such a bypass, I have opted for a simpler API (for the time being).
