@@ -64,6 +64,12 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       retryWaitMaxDuration: FiniteDuration
   ) {
 
+    private def withRunningLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
+      runningSemaphore.permit.use(_ => fa)
+
+    private def withWaitingLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
+      waitingSemaphore.permit.use(_ => fa)
+
     private[stm] def triggerReprocessing(implicit F: Concurrent[F]): F[Unit] =
       schedulerTrigger.get.flatMap(_.complete(())).void
 
@@ -83,17 +89,13 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- triggerReprocessing
       } yield ()
 
-    private def withRunningLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
-      runningSemaphore.permit.use(_ => fa)
-
-    private def withWaitingLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
-      waitingSemaphore.permit.use(_ => fa)
-
     private def attemptExecution(
         analysedTxn: AnalysedTxn[_]
     )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
       for {
-        _ <- F.pure(runningMap += (analysedTxn.id -> analysedTxn))
+        _ <- withRunningLock(
+               F.pure(runningMap += (analysedTxn.id -> analysedTxn))
+             )
         _ <- analysedTxn.execute(this).start
       } yield ()
 
