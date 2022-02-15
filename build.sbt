@@ -1,4 +1,4 @@
-ThisBuild / baseVersion := "0.1.2"
+ThisBuild / baseVersion := "0.1.3"
 ThisBuild / organization := "ai.entrolution"
 ThisBuild / organizationName := "Entrolution"
 ThisBuild / publishGithubUser := "gvonness"
@@ -21,7 +21,7 @@ ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
 
 name := "bengal-stm"
 
-version := "0.1.2"
+version := "0.1.3"
 
 scalaVersion := "2.13.8"
 crossScalaVersions := Seq("2.12.15", "2.13.8")

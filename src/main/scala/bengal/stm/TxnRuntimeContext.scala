@@ -67,9 +67,6 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     private def withRunningLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
       runningSemaphore.permit.use(_ => fa)
 
-    private def withWaitingLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
-      waitingSemaphore.permit.use(_ => fa)
-
     private[stm] def triggerReprocessing(implicit F: Concurrent[F]): F[Unit] =
       schedulerTrigger.get.flatMap(_.complete(())).void
 
@@ -77,61 +74,80 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         txnId: TxnId
     )(implicit F: Concurrent[F]): F[Unit] =
       for {
-        _ <- withRunningLock(F.pure(runningMap -= txnId))
-        _ <- triggerReprocessing
+        _                <- waitingSemaphore.acquire
+        _                <- withRunningLock(F.pure(runningMap -= txnId))
+        waitingPopulated <- F.pure(waitingBuffer.nonEmpty)
+        _ <- if (waitingPopulated)
+               triggerReprocessing
+             else {
+               F.unit
+             }
+        _ <- waitingSemaphore.release
       } yield ()
 
     private[stm] def submitTxn[V](
         analysedTxn: AnalysedTxn[V]
     )(implicit F: Concurrent[F]): F[Unit] =
       for {
-        _ <- withWaitingLock(F.pure(waitingBuffer.append(analysedTxn)))
+        _ <- waitingSemaphore.acquire
+        _ <- F.pure(waitingBuffer.append(analysedTxn))
         _ <- triggerReprocessing
+        _ <- waitingSemaphore.release
       } yield ()
 
     private def attemptExecution(
         analysedTxn: AnalysedTxn[_]
     )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
       for {
-        _ <- withRunningLock(
+        _ <- withRunningLock {
                F.pure(runningMap += (analysedTxn.id -> analysedTxn))
-             )
+             }
         _ <- analysedTxn.execute(this).start
       } yield ()
 
     private def getRunningClosure(implicit F: Concurrent[F]): F[IdClosure] =
-      withRunningLock {
-        if (runningMap.nonEmpty) {
-          F.pure(runningMap.values.map(_.idClosure).reduce(_ mergeWith _))
-        } else {
-          F.pure(IdClosure.empty)
-        }
-      }
+      for {
+        _ <- runningSemaphore.acquire
+        result <- if (runningMap.nonEmpty) {
+                    for {
+                      innerResult <- F.pure {
+                                       runningMap.values
+                                         .map(_.idClosure)
+                                         .reduce(_ mergeWith _)
+                                     }
+                      _ <- runningSemaphore.release
+                    } yield innerResult
+                  } else {
+                    for {
+                      _ <- runningSemaphore.release
+                    } yield IdClosure.empty
+                  }
+      } yield result
 
     private[stm] def reprocessWaiting(implicit
         F: Concurrent[F],
         TF: Temporal[F]
     ): F[Unit] =
       for {
-        _ <- schedulerTrigger.get.flatMap(_.get)
-        _ <- withWaitingLock {
-               for {
-                 newTrigger     <- Deferred[F, Unit]
-                 _              <- schedulerTrigger.set(newTrigger)
-                 bufferLocked   <- F.pure(waitingBuffer.toList)
-                 _              <- F.pure(waitingBuffer.clear())
-                 runningClosure <- getRunningClosure
-                 _ <- bufferLocked.foldLeftM(runningClosure) { (i, j) =>
-                        for {
-                          _ <- if (j.idClosure.isCompatibleWith(i)) {
-                                 attemptExecution(j)
-                               } else {
-                                 F.pure(waitingBuffer.append(j))
-                               }
-                        } yield i.mergeWith(j.idClosure)
-                      }
-               } yield ()
-             }
+        newTrigger <- Deferred[F, Unit]
+        _          <- schedulerTrigger.get.flatMap(_.get)
+        _          <- waitingSemaphore.acquire
+        _          <- schedulerTrigger.set(newTrigger)
+        _ <- for {
+               bufferLocked   <- F.pure(waitingBuffer.toList)
+               _              <- F.pure(waitingBuffer.clear())
+               runningClosure <- getRunningClosure
+               _ <- bufferLocked.foldLeftM(runningClosure) { (i, j) =>
+                      for {
+                        _ <- if (j.idClosure.isCompatibleWith(i)) {
+                               attemptExecution(j)
+                             } else {
+                               F.pure(waitingBuffer.append(j))
+                             }
+                      } yield i.mergeWith(j.idClosure)
+                    }
+             } yield ()
+        _ <- waitingSemaphore.release
       } yield ()
 
     @nowarn
