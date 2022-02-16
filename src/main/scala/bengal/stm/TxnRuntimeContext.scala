@@ -74,14 +74,9 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         txnId: TxnId
     )(implicit F: Concurrent[F]): F[Unit] =
       for {
-        _                <- waitingSemaphore.acquire
-        _                <- withRunningLock(F.pure(runningMap -= txnId))
-        waitingPopulated <- F.pure(waitingBuffer.nonEmpty)
-        _ <- if (waitingPopulated)
-               triggerReprocessing
-             else {
-               F.unit
-             }
+        _ <- waitingSemaphore.acquire
+        _ <- withRunningLock(F.pure(runningMap -= txnId))
+        _ <- if (waitingBuffer.nonEmpty) triggerReprocessing else F.unit
         _ <- waitingSemaphore.release
       } yield ()
 
@@ -91,8 +86,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- waitingSemaphore.acquire
         _ <- F.pure(waitingBuffer.append(analysedTxn))
-        _ <- triggerReprocessing
         _ <- waitingSemaphore.release
+        _ <- triggerReprocessing
       } yield ()
 
     private def attemptExecution(
@@ -118,9 +113,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                       _ <- runningSemaphore.release
                     } yield innerResult
                   } else {
-                    for {
-                      _ <- runningSemaphore.release
-                    } yield IdClosure.empty
+                    runningSemaphore.release.map(_ => IdClosure.empty)
                   }
       } yield result
 
@@ -133,20 +126,24 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- schedulerTrigger.get.flatMap(_.get)
         _          <- waitingSemaphore.acquire
         _          <- schedulerTrigger.set(newTrigger)
-        _ <- for {
-               bufferLocked   <- F.pure(waitingBuffer.toList)
-               _              <- F.pure(waitingBuffer.clear())
-               runningClosure <- getRunningClosure
-               _ <- bufferLocked.foldLeftM(runningClosure) { (i, j) =>
-                      for {
-                        _ <- if (j.idClosure.isCompatibleWith(i)) {
-                               attemptExecution(j)
-                             } else {
-                               F.pure(waitingBuffer.append(j))
-                             }
-                      } yield i.mergeWith(j.idClosure)
-                    }
-             } yield ()
+        _ <- if (waitingBuffer.nonEmpty) {
+               for {
+                 bufferLocked   <- F.pure(waitingBuffer.toList)
+                 _              <- F.pure(waitingBuffer.clear())
+                 runningClosure <- getRunningClosure
+                 _ <- bufferLocked.foldLeftM(runningClosure) { (i, j) =>
+                        for {
+                          _ <- if (j.idClosure.isCompatibleWith(i)) {
+                                 attemptExecution(j)
+                               } else {
+                                 F.pure(waitingBuffer.append(j))
+                               }
+                        } yield i.mergeWith(j.idClosure)
+                      }
+               } yield ()
+             } else {
+               F.pure(println("waiting buffer is empty"))
+             }
         _ <- waitingSemaphore.release
       } yield ()
 

@@ -1,0 +1,3 @@
+-XX:+UseG1GC
+-XX:+UseStringDeduplication
+-Xmx8G
