@@ -23,8 +23,8 @@ Example | Description | Type Signature | Notes
 :--- | --- | :--- | :---
 `STM.runtime[IO].unsaferunsync()` | Creates a runtime whose transaction results can be lifted into a container `F[_]` via `commit` | `def runtime[F[_]: Concurrent: Temporal](retryMaxWait: FiniteDuration): F[STM[F]]` <br/>or<br/> `def runtime[F[_]: Concurrent: Temporal]: F[STM[F]]` (default `retryMaxWait`) | `retryMaxWait` is a backstop max amount of time to wait before retrying a transaction. <br/><br/>Default: `FiniteDuration(Long.MaxValue, NANOSECONDS)` <br/><br/> It is _not_ recommended to make this a small value (i.e. making retries effectively based on polling).
 `txnVar.get.commit` | Commits a transaction and lifts the result into `F[_]` | `def commit: F[V]` | 
-`TxnVar.of[List[Int]](List()).commit` | Creates a transactional variable | ```def of[T](value: T): F[TxnVar[T]]``` 
-`TxnVarMap.of[String, Int](Map()).commit` | Creates a transactional map | ```of[K, V](valueMap: Map[K, V]): F[TxnVarMap[K, V]]``` 
+`TxnVar.of[List[Int]](List())` | Creates a transactional variable | ```def of[T](value: T): F[TxnVar[T]]``` 
+`TxnVarMap.of[String, Int](Map())` | Creates a transactional map | ```of[K, V](valueMap: Map[K, V]): F[TxnVarMap[K, V]]``` 
 `txnVar.get` | Retrieves value of transactional variable | ```def get: Txn[V]``` |
 `txnVarMap.get` | Retrieves immutable map representing transactional map state | ```def get: Txn[Map[K, V]]``` | Performance-wise it is better to retrieve individual keys instead of acquiring the entire map
 `txnVarMap.get("David")` | Retrieves optional value depending on whether key exists in the map | ```def get(key: K): Txn[Option[V]]``` | Will raise an error if the key is never created (previously or current transaction). A `None` is returned if the value has been deleted in the current transaction.
@@ -126,3 +126,6 @@ Also, while APIs are quite similar, there are some differences between Bengal an
 
 ### Why isn't there a way to bypass `waitFor`?
 I wanted `waitFor` to have a clear semantic delineation from an `if` statement in the monadic construction. While there is arguably a missed opportunity to define a canonical Semigroup via such a bypass, I have opted for a simpler API (for the time being).
+
+### Why 'Bengal'?
+Bengals are a very playful and active cat breed. I figured the name worked for something built on Cats ;).
