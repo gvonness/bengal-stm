@@ -126,24 +126,20 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- schedulerTrigger.get.flatMap(_.get)
         _          <- waitingSemaphore.acquire
         _          <- schedulerTrigger.set(newTrigger)
-        _ <- if (waitingBuffer.nonEmpty) {
-               for {
-                 bufferLocked   <- F.pure(waitingBuffer.toList)
-                 _              <- F.pure(waitingBuffer.clear())
-                 runningClosure <- getRunningClosure
-                 _ <- bufferLocked.foldLeftM(runningClosure) { (i, j) =>
-                        for {
-                          _ <- if (j.idClosure.isCompatibleWith(i)) {
-                                 attemptExecution(j)
-                               } else {
-                                 F.pure(waitingBuffer.append(j))
-                               }
-                        } yield i.mergeWith(j.idClosure)
-                      }
-               } yield ()
-             } else {
-               F.pure(println("waiting buffer is empty"))
-             }
+        _ <- for {
+               bufferLocked   <- F.pure(waitingBuffer.toList)
+               _              <- F.pure(waitingBuffer.clear())
+               runningClosure <- getRunningClosure
+               _ <- bufferLocked.foldLeftM(runningClosure) { (i, j) =>
+                      for {
+                        _ <- if (j.idClosure.isCompatibleWith(i)) {
+                               attemptExecution(j)
+                             } else {
+                               F.pure(waitingBuffer.append(j))
+                             }
+                      } yield i.mergeWith(j.idClosure)
+                    }
+             } yield ()
         _ <- waitingSemaphore.release
       } yield ()
 
