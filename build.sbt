@@ -1,6 +1,6 @@
-ThisBuild / baseVersion := "0.1.6"
+ThisBuild / baseVersion := "0.2.0"
 ThisBuild / organization := "ai.entrolution"
-ThisBuild / organizationName := "Entrolution"
+ThisBuild / organizationName := "Greg von Nessi"
 ThisBuild / publishGithubUser := "gvonness"
 ThisBuild / publishFullName := "Greg von Nessi"
 ThisBuild / startYear := Some(2020)
@@ -22,7 +22,7 @@ ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
 name := "bengal-stm"
 
 scalaVersion := "2.13.8"
-crossScalaVersions := Seq("2.12.15", "2.13.8")
+ThisBuild / crossScalaVersions := Seq("2.13.8")
 
 Global / excludeLintKeys += idePackagePrefix
 

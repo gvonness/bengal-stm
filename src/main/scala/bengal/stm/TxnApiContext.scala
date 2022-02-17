@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Entrolution
+ * Copyright 2020-2021 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,8 +34,8 @@ private[stm] trait TxnApiContext[F[_]] {
   val unit: Txn[Unit] =
     liftSuccess(TxnUnit)
 
-  def pure[V](value: V): Txn[V] =
-    liftSuccess(TxnPure(value))
+  def pure[V](value: => V): Txn[V] =
+    liftSuccess(TxnPure(() => value))
 
   def waitFor(predicate: => Boolean): Txn[Unit] =
     if (predicate) unit
@@ -45,37 +45,40 @@ private[stm] trait TxnApiContext[F[_]] {
   def abort(ex: Throwable): Txn[Unit] =
     liftFailure(TxnError(ex))
 
-  private[stm] def handleErrorWithInternal[V](fa: Txn[V])(
+  private[stm] def handleErrorWithInternal[V](fa: => Txn[V])(
       f: Throwable => Txn[V]
   ): Txn[V] =
-    liftSuccess(TxnHandleError(fa, f))
+    liftSuccess(TxnHandleError(() => fa, f))
 
-  private[stm] def getTxnVar[V](txnVar: TxnVar[V]): Txn[V] =
-    liftSuccess(TxnGetVar(txnVar))
+  private[stm] def getTxnVar[V](txnVar: => TxnVar[V]): Txn[V] =
+    liftSuccess(TxnGetVar(() => txnVar))
 
-  private[stm] def setTxnVar[V](newValue: V, txnVar: TxnVar[V]): Txn[Unit] =
-    liftSuccess(TxnSetVar(newValue, txnVar))
+  private[stm] def setTxnVar[V](
+      newValue: => V,
+      txnVar: => TxnVar[V]
+  ): Txn[Unit] =
+    liftSuccess(TxnSetVar(() => newValue, () => txnVar))
 
-  private[stm] def modifyTxnVar[V](f: V => V, txnVar: TxnVar[V]): Txn[Unit] =
+  private[stm] def modifyTxnVar[V](f: V => V, txnVar: => TxnVar[V]): Txn[Unit] =
     for {
       value <- getTxnVar(txnVar)
       _     <- setTxnVar(f(value), txnVar)
     } yield ()
 
   private[stm] def getTxnVarMap[K, V](
-      txnVarMap: TxnVarMap[K, V]
+      txnVarMap: => TxnVarMap[K, V]
   ): Txn[Map[K, V]] =
-    liftSuccess(TxnGetVarMap(txnVarMap))
+    liftSuccess(TxnGetVarMap(() => txnVarMap))
 
   private[stm] def setTxnVarMap[K, V](
-      newValueMap: Map[K, V],
-      txnVarMap: TxnVarMap[K, V]
+      newValueMap: => Map[K, V],
+      txnVarMap: => TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnSetVarMap(newValueMap, txnVarMap))
+    liftSuccess(TxnSetVarMap(() => newValueMap, () => txnVarMap))
 
   private[stm] def modifyTxnVarMap[K, V](
       f: Map[K, V] => Map[K, V],
-      txnVarMap: TxnVarMap[K, V]
+      txnVarMap: => TxnVarMap[K, V]
   ): Txn[Unit] =
     for {
       value <- getTxnVarMap(txnVarMap)
@@ -84,28 +87,28 @@ private[stm] trait TxnApiContext[F[_]] {
 
   @nowarn
   private[stm] def getTxnVarMapValue[K, V](
-      key: K,
-      txnVarMap: TxnVarMap[K, V]
+      key: => K,
+      txnVarMap: => TxnVarMap[K, V]
   )(implicit F: Concurrent[F]): Txn[Option[V]] =
-    liftSuccess(TxnGetVarMapValue(key, txnVarMap))
+    liftSuccess(TxnGetVarMapValue(() => key, () => txnVarMap))
 
   private[stm] def setTxnVarMapValue[K, V](
-      key: K,
-      newValue: V,
-      txnVarMap: TxnVarMap[K, V]
+      key: => K,
+      newValue: => V,
+      txnVarMap: => TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnSetVarMapValue(key, newValue, txnVarMap))
+    liftSuccess(TxnSetVarMapValue(() => key, () => newValue, () => txnVarMap))
 
   private[stm] def modifyTxnVarMapValue[K, V](
-      key: K,
+      key: => K,
       f: V => V,
-      txnVarMap: TxnVarMap[K, V]
+      txnVarMap: => TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnModifyVarMapValue(key, f, txnVarMap))
+    liftSuccess(TxnModifyVarMapValue(() => key, f, () => txnVarMap))
 
   private[stm] def removeTxnVarMapValue[K, V](
-      key: K,
-      txnVarMap: TxnVarMap[K, V]
+      key: => K,
+      txnVarMap: => TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnDeleteVarMapValue(key, txnVarMap))
+    liftSuccess(TxnDeleteVarMapValue(() => key, () => txnVarMap))
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Entrolution
+ * Copyright 2020-2021 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@
 package ai.entrolution
 package bengal.stm
 
-import bengal.stm.TxnCompilerContext.IdClosure
-import bengal.stm.TxnStateEntityContext.TxnId
+import bengal.stm.TxnRuntimeContext.{IdClosure, IdClosureTallies}
+import bengal.stm.TxnStateEntityContext.{TxnId, TxnVarRuntimeId}
 
 import cats.effect.implicits._
 import cats.effect.kernel.{Concurrent, Temporal}
@@ -47,6 +47,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     private[stm] def apply(logRetry: TxnLogRetry): TxnResultRetry =
       TxnResultRetry(logRetry.registerRetry)
   }
+
+  private[stm] case class TxnResultLogDirty(idClosureRefinement: IdClosure)
+      extends TxnResult
+
   private[stm] case class TxnResultFailure(ex: Throwable) extends TxnResult
 
   private[stm] object TxnResultFailure {
@@ -60,22 +64,32 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       runningSemaphore: Semaphore[F],
       waitingBuffer: ListBuffer[AnalysedTxn[_]],
       waitingSemaphore: Semaphore[F],
+      closureTallies: Ref[F, IdClosureTallies],
+      closureSemaphore: Semaphore[F],
       schedulerTrigger: Ref[F, Deferred[F, Unit]],
-      retryWaitMaxDuration: FiniteDuration
+      retryWaitMaxDuration: FiniteDuration,
+      maxWaitingToProcessInLoop: Int
   ) {
 
     private def withRunningLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
       runningSemaphore.permit.use(_ => fa)
 
+    private def withClosureLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
+      closureSemaphore.permit.use(_ => fa)
+
     private[stm] def triggerReprocessing(implicit F: Concurrent[F]): F[Unit] =
       schedulerTrigger.get.flatMap(_.complete(())).void
 
     private[stm] def registerCompletion(
-        txnId: TxnId
+        txnId: TxnId,
+        idClosure: IdClosure
     )(implicit F: Concurrent[F]): F[Unit] =
       for {
         _ <- waitingSemaphore.acquire
         _ <- withRunningLock(F.pure(runningMap -= txnId))
+        _ <- withClosureLock {
+               closureTallies.update(_.removeIdClosure(idClosure))
+             }
         _ <- if (waitingBuffer.nonEmpty) triggerReprocessing else F.unit
         _ <- waitingSemaphore.release
       } yield ()
@@ -86,6 +100,24 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- waitingSemaphore.acquire
         _ <- F.pure(waitingBuffer.append(analysedTxn))
+        _ <- withClosureLock {
+               closureTallies.update(_.addIdClosure(analysedTxn.idClosure))
+             }
+        _ <- waitingSemaphore.release
+        _ <- triggerReprocessing
+      } yield ()
+
+    private[stm] def submitTxnForImmediateRetry[V](
+        analysedTxn: AnalysedTxn[V]
+    )(implicit F: Concurrent[F]): F[Unit] =
+      for {
+        _ <- waitingSemaphore.acquire
+        _ <- F.pure(waitingBuffer.prepend(analysedTxn))
+        _ <- withClosureLock(
+               closureTallies.update(idts =>
+                 idts.addIdClosure(analysedTxn.idClosure)
+               )
+             )
         _ <- waitingSemaphore.release
         _ <- triggerReprocessing
       } yield ()
@@ -117,8 +149,37 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                   }
       } yield result
 
+    private def idClosureAnalysisRecursion(
+        currentClosure: IdClosure,
+        finalClosure: IdClosure,
+        stillWaiting: List[AnalysedTxn[_]] = List(),
+        cycles: Int = 0
+    )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
+      if (
+        (currentClosure != finalClosure && cycles <= maxWaitingToProcessInLoop) || cycles == 0
+      ) {
+        val newWaiting: F[(IdClosure, List[AnalysedTxn[_]])] = for {
+          aTxn <- F.pure(waitingBuffer.head)
+          _    <- F.pure(waitingBuffer.dropInPlace(1))
+          result <- if (aTxn.idClosure.isCompatibleWith(currentClosure)) {
+                      attemptExecution(aTxn) >> F.pure(stillWaiting)
+                    } else {
+                      F.pure(aTxn :: stillWaiting)
+                    }
+        } yield (aTxn.idClosure, result)
+
+        newWaiting.flatMap { nw =>
+          idClosureAnalysisRecursion(currentClosure.mergeWith(nw._1),
+                                     finalClosure,
+                                     nw._2,
+                                     cycles + 1
+          )
+        }
+      } else {
+        F.pure(stillWaiting.foreach(waitingBuffer.prepend))
+      }
+
     private[stm] def reprocessWaiting(implicit
-        F: Concurrent[F],
         TF: Temporal[F]
     ): F[Unit] =
       for {
@@ -127,18 +188,14 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- waitingSemaphore.acquire
         _          <- schedulerTrigger.set(newTrigger)
         _ <- for {
-               bufferLocked   <- F.pure(waitingBuffer.toList)
-               _              <- F.pure(waitingBuffer.clear())
                runningClosure <- getRunningClosure
-               _ <- bufferLocked.foldLeftM(runningClosure) { (i, j) =>
-                      for {
-                        _ <- if (j.idClosure.isCompatibleWith(i)) {
-                               attemptExecution(j)
-                             } else {
-                               F.pure(waitingBuffer.append(j))
-                             }
-                      } yield i.mergeWith(j.idClosure)
-                    }
+               totalClosure <- withClosureLock(
+                                 closureTallies.get.map(_.getIdClosure)
+                               ).map(_.mergeWith(runningClosure))
+               _ <- idClosureAnalysisRecursion(
+                      runningClosure,
+                      totalClosure
+                    )
              } yield ()
         _ <- waitingSemaphore.release
       } yield ()
@@ -156,16 +213,22 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     private[stm] def apply(
         runningSemaphore: Semaphore[F],
         waitingSemaphore: Semaphore[F],
+        closureSemaphore: Semaphore[F],
         schedulerTrigger: Ref[F, Deferred[F, Unit]],
-        retryWaitMaxDuration: FiniteDuration
+        closureTallies: Ref[F, IdClosureTallies],
+        retryWaitMaxDuration: FiniteDuration,
+        maxWaitingToProcessInLoop: Int
     ): TxnScheduler =
       TxnScheduler(
         runningMap = MutableMap(),
-        runningSemaphore,
+        runningSemaphore = runningSemaphore,
         waitingBuffer = ListBuffer(),
-        waitingSemaphore,
-        schedulerTrigger,
-        retryWaitMaxDuration
+        waitingSemaphore = waitingSemaphore,
+        closureTallies = closureTallies,
+        closureSemaphore = closureSemaphore,
+        schedulerTrigger = schedulerTrigger,
+        retryWaitMaxDuration = retryWaitMaxDuration,
+        maxWaitingToProcessInLoop = maxWaitingToProcessInLoop
       )
 
   }
@@ -198,7 +261,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                       }.flatMap { s =>
                         s.map(v =>
                           F.pure(TxnResultSuccess(v).asInstanceOf[TxnResult])
-                        ).getOrElse(commit)
+                        ).getOrElse(
+                          log.idClosure
+                            .map(TxnResultLogDirty(_).asInstanceOf[TxnResult])
+                        )
                       }
                     case retry @ TxnLogRetry(_) =>
                       F.pure(TxnResultRetry(retry))
@@ -218,11 +284,11 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                    _ <- completionSignal.complete(
                           Right[Throwable, V](result.asInstanceOf[V])
                         )
-                   _ <- ex.registerCompletion(id)
+                   _ <- ex.registerCompletion(id, idClosure)
                  } yield ()
                case TxnResultRetry(retryCallback) =>
                  for {
-                   _               <- ex.registerCompletion(id)
+                   _               <- ex.registerCompletion(id, idClosure)
                    reattemptSignal <- Deferred[F, Unit]
                    _               <- retryCallback(reattemptSignal)
                    _ <- F.race(reattemptSignal.get,
@@ -230,10 +296,17 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                         )
                    _ <- ex.submitTxn(this)
                  } yield ()
+               case TxnResultLogDirty(idClosureRefinement) =>
+                 for {
+                   _ <- ex.registerCompletion(id, idClosure)
+                   _ <- ex.submitTxnForImmediateRetry(
+                          this.copy(idClosure = idClosureRefinement)
+                        )
+                 } yield ()
                case TxnResultFailure(err) =>
                  for {
                    _ <- completionSignal.complete(Left[Throwable, V](err))
-                   _ <- ex.registerCompletion(id)
+                   _ <- ex.registerCompletion(id, idClosure)
                  } yield ()
              }
       } yield ()
@@ -263,5 +336,101 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                     case Left(ex)   => F.raiseError(ex)
                   }
       } yield result
+  }
+}
+
+private[stm] object TxnRuntimeContext {
+
+  private[stm] case class IdClosure(
+      readIds: Set[TxnVarRuntimeId],
+      updatedIds: Set[TxnVarRuntimeId]
+  ) {
+
+    private[stm] lazy val combinedIds: Set[TxnVarRuntimeId] =
+      readIds ++ updatedIds
+
+    private[stm] def addReadId(id: TxnVarRuntimeId): IdClosure =
+      this.copy(readIds = readIds + id)
+
+    private[stm] def addWriteId(id: TxnVarRuntimeId): IdClosure =
+      this.copy(updatedIds = updatedIds + id)
+
+    private[stm] def mergeWith(idScope: IdClosure): IdClosure =
+      this.copy(readIds = readIds ++ idScope.readIds,
+                updatedIds = updatedIds ++ idScope.updatedIds
+      )
+
+    private[stm] def isCompatibleWith(idScope: IdClosure): Boolean =
+      combinedIds.intersect(idScope.updatedIds).isEmpty && idScope.combinedIds
+        .intersect(updatedIds)
+        .isEmpty
+  }
+
+  private[stm] object IdClosure {
+    private[stm] val empty: IdClosure = IdClosure(Set(), Set())
+  }
+
+  private[stm] case class IdClosureTallies(
+      readIdTallies: Map[TxnVarRuntimeId, Int],
+      updatedIdTallies: Map[TxnVarRuntimeId, Int]
+  ) {
+
+    private def addReadId(id: TxnVarRuntimeId): IdClosureTallies =
+      this.copy(readIdTallies =
+        readIdTallies + (id -> (readIdTallies.getOrElse(id, 0) + 1))
+      )
+
+    private def removeReadId(id: TxnVarRuntimeId): IdClosureTallies = {
+      val newValue: Int = readIdTallies.getOrElse(id, 0) - 1
+      if (newValue < 1) {
+        this.copy(readIdTallies = readIdTallies - id)
+      } else {
+        this.copy(readIdTallies = readIdTallies + (id -> newValue))
+      }
+    }
+
+    private def addUpdateId(id: TxnVarRuntimeId): IdClosureTallies =
+      this.copy(updatedIdTallies =
+        updatedIdTallies + (id -> (updatedIdTallies.getOrElse(id, 0) + 1))
+      )
+
+    private def removeUpdateId(id: TxnVarRuntimeId): IdClosureTallies = {
+      val newValue: Int = updatedIdTallies.getOrElse(id, 0) - 1
+      if (newValue < 1) {
+        this.copy(updatedIdTallies = updatedIdTallies - id)
+      } else {
+        this.copy(updatedIdTallies = updatedIdTallies + (id -> newValue))
+      }
+    }
+
+    private def addReadIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
+      ids.foldLeft(this)((i, j) => i.addReadId(j))
+
+    private def removeReadIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
+      ids.foldLeft(this)((i, j) => i.removeReadId(j))
+
+    private def addUpdateIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
+      ids.foldLeft(this)((i, j) => i.addUpdateId(j))
+
+    private def removeUpdateIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
+      ids.foldLeft(this)((i, j) => i.removeUpdateId(j))
+
+    private[stm] def addIdClosure(idClosure: IdClosure): IdClosureTallies =
+      this.addReadIds(idClosure.readIds).addUpdateIds(idClosure.updatedIds)
+
+    private[stm] def removeIdClosure(idClosure: IdClosure): IdClosureTallies =
+      this
+        .removeReadIds(idClosure.readIds)
+        .removeUpdateIds(idClosure.updatedIds)
+
+    private[stm] def getIdClosure: IdClosure =
+      IdClosure(
+        readIds = readIdTallies.keySet,
+        updatedIds = updatedIdTallies.keySet
+      )
+  }
+
+  private[stm] object IdClosureTallies {
+    private[stm] val empty: IdClosureTallies = IdClosureTallies(Map(), Map())
   }
 }

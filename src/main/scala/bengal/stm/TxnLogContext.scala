@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Entrolution
+ * Copyright 2020-2021 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package ai.entrolution
 package bengal.stm
 
+import bengal.stm.TxnRuntimeContext.IdClosure
 import bengal.stm.TxnStateEntityContext.TxnVarRuntimeId
 
 import cats.effect.Deferred
@@ -35,6 +36,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     private[stm] def commit(implicit F: Concurrent[F]): F[Unit]
     private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean]
     private[stm] def lock(implicit F: Concurrent[F]): F[Semaphore[F]]
+    private[stm] def idClosure(implicit F: Concurrent[F]): F[IdClosure]
 
     private[stm] def getRegisterRetry(implicit
         F: Concurrent[F]
@@ -73,6 +75,13 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         F: Concurrent[F]
     ): F[Deferred[F, Unit] => F[Unit]] =
       F.pure(txnVar.registerRetry)
+
+    override private[stm] def idClosure(implicit
+        F: Concurrent[F]
+    ): F[IdClosure] =
+      F.pure {
+        IdClosure(readIds = Set(txnVar.runtimeId), updatedIds = Set())
+      }
   }
 
   private[stm] case class TxnLogUpdateVarEntry[V](
@@ -104,6 +113,16 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         F: Concurrent[F]
     ): F[Deferred[F, Unit] => F[Unit]] =
       F.pure(txnVar.registerRetry)
+
+    override private[stm] def idClosure(implicit
+        F: Concurrent[F]
+    ): F[IdClosure] =
+      F.pure {
+        IdClosure(
+          readIds = Set(txnVar.runtimeId),
+          updatedIds = Set(txnVar.runtimeId)
+        )
+      }
   }
 
   // See above comment for RO entry
@@ -157,6 +176,16 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                       F.pure(i => txnVarMap.registerRetry(i))
                   }
       } yield result
+
+    override private[stm] def idClosure(implicit
+        F: Concurrent[F]
+    ): F[IdClosure] =
+      txnVarMap.getRuntimeId(key).map { rid =>
+        IdClosure(
+          readIds = Set(rid),
+          updatedIds = Set()
+        )
+      }
   }
 
   private[stm] case class TxnLogUpdateVarMapEntry[K, V](
@@ -217,6 +246,16 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                       F.pure(i => txnVarMap.registerRetry(i))
                   }
       } yield result
+
+    override private[stm] def idClosure(implicit
+        F: Concurrent[F]
+    ): F[IdClosure] =
+      txnVarMap.getRuntimeId(key).map { rid =>
+        IdClosure(
+          readIds = Set(rid),
+          updatedIds = Set(rid)
+        )
+      }
   }
 
   private[stm] sealed trait TxnLog { self =>
@@ -300,6 +339,9 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
       F.unit
+
+    private[stm] def idClosure(implicit F: Concurrent[F]): F[IdClosure] =
+      F.pure(IdClosure.empty)
 
     @nowarn
     private[stm] def withLock[A](
@@ -615,6 +657,13 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       log.values.toList.parTraverse { entry =>
         entry.isDirty
       }.map(_.exists(isdi => isdi))
+
+    override private[stm] def idClosure(implicit
+        F: Concurrent[F]
+    ): F[IdClosure] =
+      log.values.toList.parTraverse { entry =>
+        entry.idClosure
+      }.map(_.reduce(_ mergeWith _))
 
     override private[stm] def withLock[A](
         fa: F[A]
