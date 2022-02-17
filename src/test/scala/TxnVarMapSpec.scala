@@ -46,6 +46,24 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
+  "TxnVarMap.modify" should "should modify values according to the specified transform" in new StmRuntimeFixture {
+    import stm._
+
+    def mapTransform(input: Map[String, Int]): Map[String, Int] =
+      input.map(i => i._1 -> i._2 * 2)
+
+    val baseMap   = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
+    val resultMap = Map("foo" -> 84, "bar" -> 54, "baz" -> 36)
+
+    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+
+    tVarMap.modify(mapTransform).commit.unsafeRunSync()
+
+    assertResult(resultMap) {
+      tVarMap.get.commit.unsafeRunSync()
+    }
+  }
+
   "TxnVarMap.get(key)" should "return the value of transactional variable" in new StmRuntimeFixture {
     import stm._
 

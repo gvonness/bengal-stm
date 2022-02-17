@@ -73,6 +73,15 @@ private[stm] trait TxnApiContext[F[_]] {
   ): Txn[Unit] =
     liftSuccess(TxnSetVarMap(newValueMap, txnVarMap))
 
+  private[stm] def modifyTxnVarMap[K, V](
+      f: Map[K, V] => Map[K, V],
+      txnVarMap: TxnVarMap[K, V]
+  ): Txn[Unit] =
+    for {
+      value <- getTxnVarMap(txnVarMap)
+      _     <- setTxnVarMap(f(value), txnVarMap)
+    } yield ()
+
   @nowarn
   private[stm] def getTxnVarMapValue[K, V](
       key: K,

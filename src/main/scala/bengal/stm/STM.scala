@@ -62,6 +62,9 @@ trait STM[F[_]]
     def set(newValueMap: Map[K, V]): Txn[Unit] =
       setTxnVarMap(newValueMap, txnVarMap)
 
+    def modify(f: Map[K, V] => Map[K, V]): Txn[Unit] =
+      modifyTxnVarMap(f, txnVarMap)
+
     def get(key: K): Txn[Option[V]] =
       getTxnVarMapValue(key, txnVarMap)(ConcurrentF)
 

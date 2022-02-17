@@ -26,13 +26,14 @@ Example | Description | Type Signature | Notes
 `TxnVar.of[List[Int]](List())` | Creates a transactional variable | ```def of[T](value: T): F[TxnVar[T]]``` 
 `TxnVarMap.of[String, Int](Map())` | Creates a transactional map | ```of[K, V](valueMap: Map[K, V]): F[TxnVarMap[K, V]]``` 
 `txnVar.get` | Retrieves value of transactional variable | ```def get: Txn[V]``` |
-`txnVarMap.get` | Retrieves immutable map representing transactional map state | ```def get: Txn[Map[K, V]]``` | Performance-wise it is better to retrieve individual keys instead of acquiring the entire map
+`txnVarMap.get` | Retrieves an immutable map (i.e. a view) representing transactional map state | ```def get: Txn[Map[K, V]]``` | Performance-wise it is better to retrieve individual keys instead of acquiring the entire map
 `txnVarMap.get("David")` | Retrieves optional value depending on whether key exists in the map | ```def get(key: K): Txn[Option[V]]``` | Will raise an error if the key is never created (previously or current transaction). A `None` is returned if the value has been deleted in the current transaction.
 `txnVar.set(100)` | Sets the value of transactional variable | ``` def set(newValue: V): Txn[Unit]``` 
 `txnVarMap.set(Map("David" -> 100))` | Uses an immutable map to set the transactional map state | ```def set(newValueMap: Map[K, V]): Txn[Unit]``` | Performance-wise it is better to set individual keys instead of setting the entire map in this manner. <br/><br/>This operation will create/delete key-values as needed to update the state of the map.
 `txnVarMap.set("David", 100)` | Upserts the key-value into the transactional map | ```def set(key: K, newValue: V): Txn[Unit]``` | Will create the key-value in the transactional map, if the key was not present
 `txnVar.modify(_ + 5)` | Modifies the value of a transactional variable | ```def modify(f: V => V): Txn[Unit]```
 `txnVarMap.modify("David", _ + 20)` | Modifies the value in a transactional map for a given key | ```def modify(key: K, f: V => V): Txn[Unit]``` | Will throw an error if the `key` is not present in the map (or has been deleted in the current transaction)
+`txnVarMap.modify(_.map(i => i._1 -> i._2*2))` | Modifies all the values in the map | ```def modify(f: Map[K, V] => Map[K, V]): Txn[Unit]``` | Transform can create/delete entries.<br/><br/>Again, for performance it is better to work with individual key-value pairs instead of manipulating map views
 `txnVarMap.remove("David")` | Removes a key-value from the transactional map | ```def remove(key: K): Txn[Unit]``` | Will throw an error if the key doesn't actually exist in the map (to be consistent with `get` behaviour)
 `pure(10)` | Lifts a value into a transactional monad | ```def pure[V](value: V): Txn[V]``` |
 `abort(new RuntimeException("foo"))` | Aborts the current transaction | ```def abort(ex: Throwable): Txn[Unit]``` | Variables/Maps changes in the transaction will not be changed if the transaction is aborted
