@@ -38,15 +38,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
   private[stm] sealed trait TxnResult
   private[stm] case class TxnResultSuccess[V](result: V) extends TxnResult
 
-  private[stm] case class TxnResultRetry(
-      registerRetry: Deferred[F, Unit] => F[Unit]
-  ) extends TxnResult
-
-  private[stm] object TxnResultRetry {
-
-    private[stm] def apply(logRetry: TxnLogRetry): TxnResultRetry =
-      TxnResultRetry(logRetry.registerRetry)
-  }
+  private[stm] case class TxnResultRetry(retrySignal: Deferred[F, Unit])
+      extends TxnResult
 
   private[stm] case class TxnResultLogDirty(idClosureRefinement: IdClosure)
       extends TxnResult
@@ -71,11 +64,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       maxWaitingToProcessInLoop: Int
   ) {
 
-    private def withRunningLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
-      runningSemaphore.permit.use(_ => fa)
-
-    private def withClosureLock[A](fa: F[A])(implicit F: Concurrent[F]): F[A] =
-      closureSemaphore.permit.use(_ => fa)
+    private def withLock[A](semaphore: Semaphore[F])(fa: F[A])(implicit
+        F: Concurrent[F]
+    ): F[A] =
+      semaphore.permit.use(_ => fa)
 
     private[stm] def triggerReprocessing(implicit F: Concurrent[F]): F[Unit] =
       schedulerTrigger.get.flatMap(_.complete(())).void
@@ -86,8 +78,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     )(implicit F: Concurrent[F]): F[Unit] =
       for {
         _ <- waitingSemaphore.acquire
-        _ <- withRunningLock(F.pure(runningMap -= txnId))
-        _ <- withClosureLock {
+        _ <- withLock(runningSemaphore)(F.pure(runningMap -= txnId))
+        _ <- withLock(closureSemaphore) {
                closureTallies.update(_.removeIdClosure(idClosure))
              }
         _ <- if (waitingBuffer.nonEmpty) triggerReprocessing else F.unit
@@ -100,11 +92,11 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- waitingSemaphore.acquire
         _ <- F.pure(waitingBuffer.append(analysedTxn))
-        _ <- withClosureLock {
+        _ <- withLock(closureSemaphore) {
                closureTallies.update(_.addIdClosure(analysedTxn.idClosure))
              }
-        _ <- waitingSemaphore.release
         _ <- triggerReprocessing
+        _ <- waitingSemaphore.release
       } yield ()
 
     private[stm] def submitTxnForImmediateRetry[V](
@@ -113,20 +105,20 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- waitingSemaphore.acquire
         _ <- F.pure(waitingBuffer.prepend(analysedTxn))
-        _ <- withClosureLock(
+        _ <- withLock(closureSemaphore) {
                closureTallies.update(idts =>
                  idts.addIdClosure(analysedTxn.idClosure)
                )
-             )
-        _ <- waitingSemaphore.release
+             }
         _ <- triggerReprocessing
+        _ <- waitingSemaphore.release
       } yield ()
 
     private def attemptExecution(
         analysedTxn: AnalysedTxn[_]
     )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
       for {
-        _ <- withRunningLock {
+        _ <- withLock(runningSemaphore) {
                F.pure(runningMap += (analysedTxn.id -> analysedTxn))
              }
         _ <- analysedTxn.execute(this).start
@@ -179,9 +171,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         F.pure(stillWaiting.foreach(waitingBuffer.prepend))
       }
 
-    private[stm] def reprocessWaiting(implicit
-        TF: Temporal[F]
-    ): F[Unit] =
+    private[stm] def reprocessWaiting(implicit TF: Temporal[F]): F[Unit] =
       for {
         newTrigger <- Deferred[F, Unit]
         _          <- schedulerTrigger.get.flatMap(_.get)
@@ -189,9 +179,9 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- schedulerTrigger.set(newTrigger)
         _ <- for {
                runningClosure <- getRunningClosure
-               totalClosure <- withClosureLock(
+               totalClosure <- withLock(closureSemaphore) {
                                  closureTallies.get.map(_.getIdClosure)
-                               ).map(_.mergeWith(runningClosure))
+                               }.map(_.mergeWith(runningClosure))
                _ <- idClosureAnalysisRecursion(
                       runningClosure,
                       totalClosure
@@ -245,7 +235,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     ): F[(TxnLog, V)] =
       txn.foldMap[TxnLogStore](txnLogCompiler).run(TxnLogValid.empty)
 
-    private[stm] def commit(implicit F: Concurrent[F]): F[TxnResult] =
+    private def commit(implicit F: Concurrent[F]): F[TxnResult] =
       for {
         logResult <- getTxnLogResult
         (log, logValue) = logResult
@@ -267,7 +257,24 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                         )
                       }
                     case retry @ TxnLogRetry(_) =>
-                      F.pure(TxnResultRetry(retry))
+                      F.uncancelable { _ =>
+                        retry.validLog.withLock {
+                          F.ifM[TxnResult](log.isDirty)(
+                            retry.validLog.idClosure.map(
+                              TxnResultLogDirty(_).asInstanceOf[TxnResult]
+                            ),
+                            retry.getRetrySignal
+                              .map(_.map(TxnResultRetry).getOrElse {
+                                TxnResultFailure(
+                                  new RuntimeException(
+                                    "No retry signal present for transaction!"
+                                  )
+                                )
+                              })
+                              .map(_.asInstanceOf[TxnResult])
+                          )
+                        }
+                      }
                     case err @ TxnLogError(_) =>
                       F.pure(TxnResultFailure(err))
                   }
@@ -276,41 +283,46 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     private[stm] def execute(
         ex: TxnScheduler
     )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
-      for {
-        result <- commit
-        _ <- result match {
-               case TxnResultSuccess(result) =>
-                 for {
-                   _ <- completionSignal.complete(
-                          Right[Throwable, V](result.asInstanceOf[V])
-                        )
-                   _ <- ex.registerCompletion(id, idClosure)
-                 } yield ()
-               case TxnResultRetry(retryCallback) =>
-                 for {
-                   _               <- ex.registerCompletion(id, idClosure)
-                   reattemptSignal <- Deferred[F, Unit]
-                   _               <- retryCallback(reattemptSignal)
-                   _ <- F.race(reattemptSignal.get,
-                               TF.sleep(ex.retryWaitMaxDuration)
-                        )
-                   _ <- ex.submitTxn(this)
-                 } yield ()
-               case TxnResultLogDirty(idClosureRefinement) =>
-                 for {
-                   _ <- ex.registerCompletion(id, idClosure)
-                   _ <- ex.submitTxnForImmediateRetry(
-                          this.copy(idClosure = idClosureRefinement)
-                        )
-                 } yield ()
-               case TxnResultFailure(err) =>
-                 for {
-                   _ <- completionSignal.complete(Left[Throwable, V](err))
-                   _ <- ex.registerCompletion(id, idClosure)
-                 } yield ()
-             }
-      } yield ()
-
+      F.uncancelable { poll =>
+        for {
+          result <- poll(commit)
+          _ <- result match {
+                 case TxnResultSuccess(result) =>
+                   for {
+                     _ <- completionSignal.complete(
+                            Right[Throwable, V](result.asInstanceOf[V])
+                          )
+                     _ <- ex.registerCompletion(id, idClosure)
+                   } yield ()
+                 case TxnResultRetry(retrySignal) =>
+                   for {
+                     _ <- ex.registerCompletion(id, idClosure)
+                     _ <- poll {
+                            for {
+                              _ <- F.race(retrySignal.get,
+                                          TF.sleep(ex.retryWaitMaxDuration)
+                                   )
+                              _ <- ex.submitTxn(this)
+                            } yield ()
+                          }
+                   } yield ()
+                 case TxnResultLogDirty(idClosureRefinement) =>
+                   for {
+                     _ <- ex.registerCompletion(id, idClosure)
+                     _ <- poll {
+                            ex.submitTxnForImmediateRetry(
+                              this.copy(idClosure = idClosureRefinement)
+                            )
+                          }
+                   } yield ()
+                 case TxnResultFailure(err) =>
+                   for {
+                     _ <- completionSignal.complete(Left[Throwable, V](err))
+                     _ <- ex.registerCompletion(id, idClosure)
+                   } yield ()
+               }
+        } yield ()
+      }
   }
 
   private[stm] trait TxnRuntime {

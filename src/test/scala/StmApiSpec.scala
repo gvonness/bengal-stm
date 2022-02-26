@@ -57,7 +57,7 @@ class StmApiSpec extends AnyFlatSpec {
     }
   }
 
-  "handleError" should "bypass mutations from the error transaction" in new StmRuntimeFixture {
+  it should "bypass mutations from the error transaction" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)

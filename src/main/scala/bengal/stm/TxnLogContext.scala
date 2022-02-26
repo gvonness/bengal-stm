@@ -337,6 +337,11 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
       F.pure(false)
 
+    private[stm] def getRetrySignal(implicit
+        F: Concurrent[F]
+    ): F[Option[Deferred[F, Unit]]] =
+      F.pure(None)
+
     private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
       F.unit
 
@@ -647,11 +652,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     override private[stm] def scheduleRetry(implicit
         F: Concurrent[F]
     ): F[TxnLog] =
-      for {
-        registerRetries <- log.values.toList.parTraverse(_.getRegisterRetry)
-      } yield TxnLogRetry(signal =>
-        registerRetries.parTraverse(rr => rr(signal)).void
-      )
+      F.pure(TxnLogRetry(this))
 
     override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
       log.values.toList.parTraverse { entry =>
@@ -683,9 +684,20 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     private[stm] val empty: TxnLogValid = TxnLogValid(Map())
   }
 
-  private[stm] case class TxnLogRetry(
-      registerRetry: Deferred[F, Unit] => F[Unit]
-  ) extends TxnLog {
+  private[stm] case class TxnLogRetry(validLog: TxnLogValid) extends TxnLog {
+
+    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
+      validLog.isDirty
+
+    override private[stm] def getRetrySignal(implicit
+        F: Concurrent[F]
+    ): F[Option[Deferred[F, Unit]]] =
+      for {
+        retrySignal <- Deferred[F, Unit]
+        registerRetries <-
+          validLog.log.values.toList.parTraverse(_.getRegisterRetry)
+        _ <- registerRetries.parTraverse(rr => rr(retrySignal))
+      } yield Some(retrySignal)
 
     override private[stm] def raiseError(ex: Throwable)(implicit
         F: Concurrent[F]

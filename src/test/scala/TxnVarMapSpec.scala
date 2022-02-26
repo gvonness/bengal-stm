@@ -76,7 +76,7 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
-  "TxnVarMap.get(key)" should "throw an error if key isn't present" in new StmRuntimeFixture {
+  it should "throw an error if key isn't present" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
@@ -88,7 +88,7 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
-  "TxnVarMap.get(key)" should "return None if the key is deleted in the current transaction" in new StmRuntimeFixture {
+  it should "return None if the key is deleted in the current transaction" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
@@ -117,7 +117,7 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
-  "TxnVarMap.set(key)" should "creates new entry for non-existent key" in new StmRuntimeFixture {
+  it should "creates new entry for non-existent key" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
@@ -145,7 +145,7 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
-  "TxnVarMap.modify" should "throw an error if key isn't present" in new StmRuntimeFixture {
+  it should "throw an error if key isn't present" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
@@ -157,7 +157,7 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
-  "TxnVarMap.modify" should "modify value for key created in current transaction" in new StmRuntimeFixture {
+  it should "modify value for key created in current transaction" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
@@ -187,7 +187,7 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
-  "TxnVarMap.remove(key)" should "throw an error if key doesn't exist" in new StmRuntimeFixture {
+  it should "throw an error if key doesn't exist" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
@@ -199,7 +199,7 @@ class TxnVarMapSpec extends AnyFlatSpec {
     }
   }
 
-  "TxnVarMap.remove(key)" should "remove value of entry created in current transaction" in new StmRuntimeFixture {
+  it should "remove value of entry created in current transaction" in new StmRuntimeFixture {
     import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)

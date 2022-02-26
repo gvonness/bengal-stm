@@ -63,12 +63,10 @@ private[stm] trait TxnStateEntityContext[F[_]] {
   ) extends TxnStateEntity[T] {
 
     private def completeRetrySignals(implicit F: Concurrent[F]): F[Unit] =
-      F.uncancelable { _ =>
-        for {
-          signals <- txnRetrySignals.getAndSet(Set())
-          _       <- signals.toList.parTraverse(_.complete(()))
-        } yield ()
-      }
+      for {
+        signals <- txnRetrySignals.getAndSet(Set())
+        _       <- signals.toList.parTraverse(_.complete(()))
+      } yield ()
 
     private[stm] def get: F[T] =
       value.get
