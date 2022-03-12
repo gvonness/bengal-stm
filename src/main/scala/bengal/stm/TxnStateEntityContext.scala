@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Greg von Nessi
+ * Copyright 2020-2022 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import cats.implicits._
 import cats.effect.implicits._
 
 import java.util.UUID
+import scala.annotation.nowarn
 import scala.collection.mutable.{Map => MutableMap}
 
 private[stm] trait TxnStateEntityContext[F[_]] {
@@ -51,7 +52,10 @@ private[stm] trait TxnStateEntityContext[F[_]] {
     private[stm] def commitLock: Semaphore[F]
     private[stm] def txnRetrySignals: TxnSignals
 
-    final private[stm] def registerRetry(signal: Deferred[F, Unit]): F[Unit] =
+    @nowarn
+    private[stm] def registerRetry(signal: Deferred[F, Unit])(implicit
+        F: Concurrent[F]
+    ): F[Unit] =
       txnRetrySignals.update(_ + signal)
   }
 
@@ -95,8 +99,15 @@ private[stm] trait TxnStateEntityContext[F[_]] {
       id: TxnVarId,
       protected val value: Ref[F, VarIndex[K, V]],
       commitLock: Semaphore[F],
+      private val internalStructureLock: Semaphore[F],
+      private val internalSignalLock: Semaphore[F],
       txnRetrySignals: TxnSignals
   ) extends TxnStateEntity[VarIndex[K, V]] {
+
+    private def withLock[A](semaphore: Semaphore[F])(fa: F[A])(implicit
+        F: Concurrent[F]
+    ): F[A] =
+      semaphore.permit.use(_ => fa)
 
     private[stm] def get(implicit F: Concurrent[F]): F[Map[K, V]] =
       for {
@@ -139,8 +150,10 @@ private[stm] trait TxnStateEntityContext[F[_]] {
 
     private[stm] def getRuntimeId(key: K)(implicit
         F: Concurrent[F]
-    ): F[TxnVarRuntimeId] =
-      getRuntimeActualisedId(key).map(_.getOrElse(getRuntimeExistentialId(key)))
+    ): F[List[TxnVarRuntimeId]] =
+      getRuntimeActualisedId(key).map(
+        List(_, Some(getRuntimeExistentialId(key))).flatten
+      )
 
     // Get transactional IDs for any keys already existing
     // in the map
@@ -157,7 +170,9 @@ private[stm] trait TxnStateEntityContext[F[_]] {
     ): F[Unit] =
       for {
         newTxnVar <- TxnVar.of(newValue)
-        _         <- value.update(_ += (newKey -> newTxnVar))
+        _ <- withLock(internalStructureLock)(
+               value.update(_ += (newKey -> newTxnVar))
+             )
       } yield ()
 
     private[stm] def addOrUpdate(key: K, newValue: V)(implicit
@@ -167,7 +182,7 @@ private[stm] trait TxnStateEntityContext[F[_]] {
         txnVarMap <- value.get
         _ <- txnVarMap.get(key) match {
                case Some(tVar) =>
-                 tVar.set(newValue)
+                 withLock(internalStructureLock)(tVar.set(newValue))
                case None =>
                  add(key, newValue)
              }
@@ -178,11 +193,16 @@ private[stm] trait TxnStateEntityContext[F[_]] {
         txnVarMap <- value.get
         _ <- txnVarMap.get(key) match {
                case Some(_) =>
-                 value.update(_ -= key)
+                 withLock(internalStructureLock)(value.update(_ -= key))
                case None =>
                  F.unit
              }
       } yield ()
+
+    override private[stm] def registerRetry(
+        signal: Deferred[F, Unit]
+    )(implicit F: Concurrent[F]): F[Unit] =
+      withLock(internalSignalLock)(txnRetrySignals.update(_ + signal))
   }
 
   object TxnVarMap {
@@ -195,10 +215,18 @@ private[stm] trait TxnStateEntityContext[F[_]] {
         values <- valueMap.toList.traverse { kv =>
                     TxnVar.of(kv._2).map(txv => kv._1 -> txv)
                   }
-        valuesRef <- F.ref(MutableMap(values: _*))
-        lock      <- Semaphore[F](1)
-        signals   <- F.ref(Set[Deferred[F, Unit]]())
-      } yield TxnVarMap(id, valuesRef, lock, signals)
+        valuesRef             <- F.ref(MutableMap(values: _*))
+        lock                  <- Semaphore[F](1)
+        internalStructureLock <- Semaphore[F](1)
+        internalSignalLock    <- Semaphore[F](1)
+        signals               <- F.ref(Set[Deferred[F, Unit]]())
+      } yield TxnVarMap(id,
+                        valuesRef,
+                        lock,
+                        internalStructureLock,
+                        internalSignalLock,
+                        signals
+      )
   }
 }
 

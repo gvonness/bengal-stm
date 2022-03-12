@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Greg von Nessi
+ * Copyright 2020-2022 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ private[stm] trait TxnCompilerContext[F[_]] {
   this: TxnAdtContext[F] with TxnStateEntityContext[F] with TxnLogContext[F] =>
 
   private[stm] type IdClosureStore[T] = StateT[F, IdClosure, T]
-  private[stm] type TxnErrorStore[T]  = StateT[F, TxnErratum, T]
   private[stm] type TxnLogStore[T]    = StateT[F, TxnLog, T]
 
   private def noOp[S](implicit F: Concurrent[F]): StateT[F, S, Unit] =
@@ -41,19 +40,54 @@ private[stm] trait TxnCompilerContext[F[_]] {
       case Right(TxnUnit) =>
         noOp[S].map(_.asInstanceOf[V])
       case Right(TxnPure(value)) =>
-        StateT[F, S, V](s => F.pure((s, value())))
+        StateT[F, S, V] { s =>
+          try {
+            val materializedValue = value()
+
+            F.pure((s, materializedValue))
+          } catch {
+            case _: Throwable =>
+              F.pure((s, ().asInstanceOf[V]))
+          }
+        }
       case Right(TxnGetVar(txnVar)) =>
-        StateT[F, S, V](s => txnVar().get.map(v => (s, v)))
+        StateT[F, S, V] { s =>
+          try {
+            val materializedVar = txnVar()
+
+            materializedVar.get.map(v => (s, v))
+          } catch {
+            case _: Throwable =>
+              F.pure((s, ().asInstanceOf[V]))
+          }
+        }
       case Right(_: TxnSetVar[_]) =>
         noOp[S].map(_.asInstanceOf[V])
       case Right(adt: TxnGetVarMap[_, _]) =>
-        StateT[F, S, V](s =>
-          adt.txnVarMap().get.map(v => (s, v.asInstanceOf[V]))
-        )
+        StateT[F, S, V] { s =>
+          try {
+            val materializedVarMap = adt.txnVarMap()
+
+            materializedVarMap.get.map(v => (s, v.asInstanceOf[V]))
+          } catch {
+            case _: Throwable =>
+              F.pure((s, ().asInstanceOf[V]))
+          }
+        }
       case Right(adt: TxnGetVarMapValue[_, _]) =>
-        StateT[F, S, V](s =>
-          adt.txnVarMap().get.map(v => (s, v.get(adt.key()).asInstanceOf[V]))
-        )
+        StateT[F, S, V] { s =>
+          try {
+            val materializedVarMap = adt.txnVarMap()
+            val materializedKey    = adt.key()
+
+            materializedVarMap.get.map(v =>
+              (s, v.get(materializedKey).asInstanceOf[V])
+            )
+          } catch {
+            case _: Throwable =>
+              F.pure((s, ().asInstanceOf[V]))
+          }
+        }
       case Right(_: TxnSetVarMap[_, _]) =>
         noOp[S].map(_.asInstanceOf[V])
       case Right(_: TxnSetVarMapValue[_, _]) =>
@@ -77,70 +111,141 @@ private[stm] trait TxnCompilerContext[F[_]] {
         fa match {
           case Right(TxnGetVar(txnVar)) =>
             StateT[F, IdClosure, V] { s =>
-              txnVar().get.map { v =>
-                (s.addReadId(txnVar().runtimeId), v)
+              try {
+                val materializedVar = txnVar()
+
+                materializedVar.get.map { v =>
+                  (s.addReadId(materializedVar.runtimeId), v)
+                }
+              } catch {
+                case _: Throwable =>
+                  F.pure((s, ().asInstanceOf[V]))
               }
             }
           case Right(adt: TxnGetVarMap[_, _]) =>
             StateT[F, IdClosure, V] { s =>
-              adt
-                .txnVarMap()
-                .get
-                .map(v =>
-                  (s.addReadId(adt.txnVarMap().runtimeId), v.asInstanceOf[V])
-                )
+              try {
+                val materializedVarMap = adt.txnVarMap()
+
+                materializedVarMap.get
+                  .map(v =>
+                    (s.addReadId(materializedVarMap.runtimeId),
+                     v.asInstanceOf[V]
+                    )
+                  )
+              } catch {
+                case _: Throwable =>
+                  F.pure((s, ().asInstanceOf[V]))
+              }
             }
           case Right(adt: TxnGetVarMapValue[_, _]) =>
             StateT[F, IdClosure, V] { s =>
-              for {
-                oTxnVar <- adt.txnVarMap().getTxnVar(adt.key())
-                value   <- oTxnVar.map(_.get.map(Some(_))).getOrElse(F.pure(None))
-                oARId   <- adt.txnVarMap().getRuntimeActualisedId(adt.key())
-                eRId = adt.txnVarMap().getRuntimeExistentialId(adt.key())
-              } yield oARId
-                .map(id =>
-                  (s.addReadId(id).addReadId(eRId), value.asInstanceOf[V])
-                )
-                .getOrElse((s.addReadId(eRId), value.asInstanceOf[V]))
+              try {
+                val materializedVarMap = adt.txnVarMap()
+                val materializedKey    = adt.key()
+
+                for {
+                  oTxnVar <- materializedVarMap.getTxnVar(materializedKey)
+                  value <-
+                    oTxnVar.map(_.get.map(Some(_))).getOrElse(F.pure(None))
+                  oARId <-
+                    materializedVarMap.getRuntimeActualisedId(materializedKey)
+                  eRId =
+                    materializedVarMap.getRuntimeExistentialId(materializedKey)
+                } yield oARId
+                  .map(id =>
+                    (s.addReadId(id).addReadId(eRId), value.asInstanceOf[V])
+                  )
+                  .getOrElse((s.addReadId(eRId), value.asInstanceOf[V]))
+              } catch {
+                case _: Throwable =>
+                  F.pure((s, ().asInstanceOf[V]))
+              }
             }
           case Right(adt: TxnSetVar[_]) =>
             StateT[F, IdClosure, Unit] { s =>
-              F.pure((s.addWriteId(adt.txnVar().runtimeId), ()))
+              try {
+                val materializedVar = adt.txnVar()
+
+                F.pure((s.addWriteId(materializedVar.runtimeId), ()))
+              } catch {
+                case _: Throwable => F.pure((s, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnSetVarMap[_, _]) =>
             StateT[F, IdClosure, Unit] { s =>
-              F.pure((s.addWriteId(adt.txnVarMap().runtimeId), ()))
+              try {
+                val materializedVarMap = adt.txnVarMap()
+
+                F.pure((s.addWriteId(materializedVarMap.runtimeId), ()))
+              } catch {
+                case _: Throwable => F.pure((s, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnSetVarMapValue[_, _]) =>
             StateT[F, IdClosure, Unit] { s =>
-              for {
-                oARId <- adt.txnVarMap().getRuntimeActualisedId(adt.key())
-                eRId = adt.txnVarMap().getRuntimeExistentialId(adt.key())
-              } yield oARId
-                .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                .getOrElse((s.addWriteId(eRId), ()))
+              try {
+                val materializedVarMap = adt.txnVarMap()
+                val materializedKey    = adt.key()
+
+                for {
+                  oARId <-
+                    materializedVarMap.getRuntimeActualisedId(materializedKey)
+                  eRId =
+                    materializedVarMap.getRuntimeExistentialId(materializedKey)
+                } yield oARId
+                  .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
+                  .getOrElse((s.addWriteId(eRId), ()))
+              } catch {
+                case _: Throwable => F.pure((s, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnModifyVarMapValue[_, _]) =>
             StateT[F, IdClosure, Unit] { s =>
-              for {
-                oARId <- adt.txnVarMap().getRuntimeActualisedId(adt.key())
-                eRId = adt.txnVarMap().getRuntimeExistentialId(adt.key())
-              } yield oARId
-                .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                .getOrElse((s.addWriteId(eRId), ()))
+              try {
+                val materializedVarMap = adt.txnVarMap()
+                val materializedKey    = adt.key()
+
+                for {
+                  oARId <-
+                    materializedVarMap.getRuntimeActualisedId(materializedKey)
+                  eRId =
+                    materializedVarMap.getRuntimeExistentialId(materializedKey)
+                } yield oARId
+                  .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
+                  .getOrElse((s.addWriteId(eRId), ()))
+              } catch {
+                case _: Throwable => F.pure((s, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnDeleteVarMapValue[_, _]) =>
             StateT[F, IdClosure, Unit] { s =>
-              for {
-                oARId <- adt.txnVarMap().getRuntimeActualisedId(adt.key())
-                eRId = adt.txnVarMap().getRuntimeExistentialId(adt.key())
-              } yield oARId
-                .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                .getOrElse((s.addWriteId(eRId), ()))
+              try {
+                val materializedVarMap = adt.txnVarMap()
+                val materializedKey    = adt.key()
+
+                for {
+                  oARId <-
+                    materializedVarMap.getRuntimeActualisedId(materializedKey)
+                  eRId =
+                    materializedVarMap.getRuntimeExistentialId(materializedKey)
+                } yield oARId
+                  .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
+                  .getOrElse((s.addWriteId(eRId), ()))
+              } catch {
+                case _: Throwable => F.pure((s, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnHandleError[_]) =>
             StateT[F, IdClosure, V] { s =>
-              adt.fa().foldMap(staticAnalysisCompiler).run(s)
+              try {
+                val materializedF: Txn[V] = adt.fa().map(_.asInstanceOf[V])
+
+                materializedF.foldMap(staticAnalysisCompiler).run(s)
+              } catch {
+                case _: Throwable =>
+                  F.pure((s, ().asInstanceOf[V]))
+              }
             }
           case _ =>
             voidMapping[IdClosure, V](fa)
@@ -156,107 +261,161 @@ private[stm] trait TxnCompilerContext[F[_]] {
         fa match {
           case Right(TxnGetVar(txnVar)) =>
             StateT[F, TxnLog, V] { s =>
-              for {
-                newState <- s.getVar(txnVar())
-                value    <- newState.getCurrentValue(txnVar())
-                result <- value match {
-                            case Some(v) => F.pure((newState, v))
-                            case None =>
-                              for {
-                                fallbackValue <- txnVar().get
-                              } yield (newState, fallbackValue)
-                          }
-              } yield result
+              try {
+                val materializedVar = txnVar()
+
+                for {
+                  newState <- s.getVar(materializedVar)
+                  value    <- newState.getCurrentValue(materializedVar)
+                  result <- value match {
+                              case Some(v) => F.pure((newState, v))
+                              case None =>
+                                for {
+                                  fallbackValue <- materializedVar.get
+                                } yield (newState, fallbackValue)
+                            }
+                } yield result
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ().asInstanceOf[V]))
+              }
             }
           case Right(adt: TxnSetVar[_]) =>
-            StateT[F, TxnLog, V] { s =>
-              for {
-                newState <- s.setVar(adt.newValue(), adt.txnVar())
-              } yield (newState, ())
-            }
+            StateT[F, TxnLog, Unit] { s =>
+              try {
+                val materializedVar      = adt.txnVar()
+                val materializedNewValue = adt.newValue()
+
+                s.setVar(materializedNewValue, materializedVar)
+                  .map(
+                    (_, ())
+                  )
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ()))
+              }
+            }.map(_.asInstanceOf[V])
           case Right(adt: TxnGetVarMap[_, _]) =>
             StateT[F, TxnLog, V] { s =>
-              for {
-                immutableMap <- adt.txnVarMap().get
-                newState <- immutableMap.keySet.toList.foldLeftM(s) { (i, j) =>
-                              i.getVarMapValue(j, adt.txnVarMap())
-                            }
-              } yield (newState, newState.getCurrentValue(adt.txnVarMap()))
+              try {
+                val materializedVarMap = adt.txnVarMap()
+
+                for {
+                  newState <- s.getVarMap(materializedVarMap)
+                  newValue <- newState.getCurrentValue(materializedVarMap)
+                } yield (newState, newValue)
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ().asInstanceOf[V]))
+              }
             }
           case Right(adt: TxnGetVarMapValue[_, _]) =>
             StateT[F, TxnLog, V] { s =>
-              for {
-                newState <- s.getVarMapValue(adt.key(), adt.txnVarMap())
-                value    <- newState.getCurrentValue(adt.key(), adt.txnVarMap())
-              } yield (newState, value.asInstanceOf[V])
+              try {
+                val materializedVarMap = adt.txnVarMap()
+                val materializedKey    = adt.key()
+
+                for {
+                  newState <-
+                    s.getVarMapValue(materializedKey, materializedVarMap)
+                  value <- newState.getCurrentValue(materializedKey,
+                                                    materializedVarMap
+                           )
+                } yield (newState, value.asInstanceOf[V])
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ().asInstanceOf[V]))
+              }
             }
           case Right(adt: TxnSetVarMap[_, _]) =>
-            StateT[F, TxnLog, Unit] { log =>
-              for {
-                deleted <-
-                  adt
-                    .txnVarMap()
-                    .get
-                    .map(m =>
-                      m.keySet ++ log
-                        .getCurrentValue(adt.txnVarMap())
-                        .keySet -- adt.newMap().keySet
-                    )
-                additions <- adt.newMap().toList.foldLeftM(log) { (i, j) =>
-                               i.setVarMapValue(j._1, j._2, adt.txnVarMap())
-                             }
-                result <- deleted.toList.foldLeftM(additions) { (i, j) =>
-                            i.deleteVarMapValue(j, adt.txnVarMap())
-                          }
-              } yield (result, ())
+            StateT[F, TxnLog, Unit] { s =>
+              try {
+                val materializedVarMap    = adt.txnVarMap()
+                val materializedNewVarMap = adt.newMap()
+
+                for {
+                  newState <-
+                    s.setVarMap(materializedNewVarMap, materializedVarMap)
+                } yield (newState, ())
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnSetVarMapValue[_, _]) =>
             StateT[F, TxnLog, Unit] { s =>
-              for {
-                newState <-
-                  s.setVarMapValue(adt.key(), adt.newValue(), adt.txnVarMap())
-              } yield (newState, ())
+              try {
+                val materializedVarMap   = adt.txnVarMap()
+                val materializedKey      = adt.key()
+                val materializedNewValue = adt.newValue()
+
+                s.setVarMapValue(materializedKey,
+                                 materializedNewValue,
+                                 materializedVarMap
+                ).map(
+                  (_, ())
+                )
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnModifyVarMapValue[_, _]) =>
             StateT[F, TxnLog, Unit] { s =>
-              for {
-                newState <-
-                  s.modifyVarMapValue(adt.key(), adt.f, adt.txnVarMap())
-              } yield (newState, ())
+              try {
+                val materializedVarMap = adt.txnVarMap()
+                val materializedKey    = adt.key()
+
+                s.modifyVarMapValue(materializedKey, adt.f, materializedVarMap)
+                  .map(
+                    (_, ())
+                  )
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnDeleteVarMapValue[_, _]) =>
             StateT[F, TxnLog, Unit] { s =>
-              for {
-                newState <- s.deleteVarMapValue(adt.key(), adt.txnVarMap())
-              } yield (newState, ())
+              try {
+                val materializedVarMap = adt.txnVarMap()
+                val materializedKey    = adt.key()
+
+                s.deleteVarMapValue(materializedKey, materializedVarMap)
+                  .map((_, ()))
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ()))
+              }
             }.map(_.asInstanceOf[V])
           case Right(adt: TxnHandleError[_]) =>
             StateT[F, TxnLog, V] { s =>
-              for {
-                originalResult <- adt.fa().foldMap(txnLogCompiler).run(s)
-                finalResult <- originalResult._1 match {
-                                 case TxnLogError(ex) =>
-                                   adt
-                                     .f(ex)
-                                     .foldMap(txnLogCompiler)
-                                     .run(s)
-                                 case _ =>
-                                   F.pure(originalResult)
-                               }
-              } yield finalResult
+              try {
+                val materializedF = adt.fa()
+
+                for {
+                  originalResult <- materializedF.foldMap(txnLogCompiler).run(s)
+                  finalResult <- originalResult._1 match {
+                                   case TxnLogError(ex) =>
+                                     adt
+                                       .f(ex)
+                                       .foldMap(txnLogCompiler)
+                                       .run(s)
+                                   case _ =>
+                                     F.pure(originalResult)
+                                 }
+                } yield finalResult
+              } catch {
+                case ex: Throwable =>
+                  s.raiseError(ex).map((_, ().asInstanceOf[V]))
+              }
             }
           case Left(TxnRetry) =>
-            StateT[F, TxnLog, Unit] { s =>
-              for {
-                newState <- s.scheduleRetry
-              } yield (newState, ())
-            }.map(_.asInstanceOf[V])
+            StateT[F, TxnLog, Unit](_.scheduleRetry.map((_, ())))
+              .map(_.asInstanceOf[V])
           case Left(TxnError(ex)) =>
-            StateT[F, TxnLog, Unit] { s =>
-              for {
-                newState <- s.raiseError(ex)
-              } yield (newState, ())
-            }.map(_.asInstanceOf[V])
+            StateT[F, TxnLog, Unit](_.raiseError(ex).map((_, ())))
+              .map(_.asInstanceOf[V])
           case _ =>
             voidMapping[TxnLog, V](fa)
         }

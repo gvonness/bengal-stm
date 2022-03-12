@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Greg von Nessi
+ * Copyright 2020-2022 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,6 +76,29 @@ class StmApiSpec extends AnyFlatSpec {
           result <- tVarMap.get("foo")
         } yield result
       }.commit.unsafeRunSync()
+    }
+  }
+
+  "waitFor" should "should complete when predicate is satisfied" in new StmRuntimeFixture {
+
+    import stm._
+
+    val tVar: TxnVar[Int] = TxnVar.of(1).unsafeRunSync()
+
+    val program1: Txn[Int] = for {
+      result <- tVar.get
+      _      <- waitFor(result > 3)
+    } yield result
+
+    val program2: Txn[Unit] =
+      tVar.set(5)
+
+    assertResult(5) {
+      (for {
+        resFib <- program1.commit.start
+        _      <- program2.commit.start
+        result <- resFib.joinWithNever
+      } yield result).unsafeRunSync()
     }
   }
 }

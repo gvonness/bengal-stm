@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Greg von Nessi
+ * Copyright 2020-2022 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -286,40 +286,29 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       F.uncancelable { poll =>
         for {
           result <- poll(commit)
+          _      <- ex.registerCompletion(id, idClosure)
           _ <- result match {
                  case TxnResultSuccess(result) =>
-                   for {
-                     _ <- completionSignal.complete(
-                            Right[Throwable, V](result.asInstanceOf[V])
-                          )
-                     _ <- ex.registerCompletion(id, idClosure)
-                   } yield ()
+                   completionSignal.complete(
+                     Right[Throwable, V](result.asInstanceOf[V])
+                   )
                  case TxnResultRetry(retrySignal) =>
-                   for {
-                     _ <- ex.registerCompletion(id, idClosure)
-                     _ <- poll {
-                            for {
-                              _ <- F.race(retrySignal.get,
-                                          TF.sleep(ex.retryWaitMaxDuration)
-                                   )
-                              _ <- ex.submitTxn(this)
-                            } yield ()
-                          }
-                   } yield ()
-                 case TxnResultLogDirty(idClosureRefinement) =>
-                   for {
-                     _ <- ex.registerCompletion(id, idClosure)
-                     _ <- poll {
-                            ex.submitTxnForImmediateRetry(
-                              this.copy(idClosure = idClosureRefinement)
+                   poll {
+                     for {
+                       _ <- F.race(retrySignal.get,
+                                   TF.sleep(ex.retryWaitMaxDuration)
                             )
-                          }
-                   } yield ()
+                       _ <- ex.submitTxn(this)
+                     } yield ()
+                   }
+                 case TxnResultLogDirty(idClosureRefinement) =>
+                   poll {
+                     ex.submitTxnForImmediateRetry(
+                       this.copy(idClosure = idClosureRefinement)
+                     )
+                   }
                  case TxnResultFailure(err) =>
-                   for {
-                     _ <- completionSignal.complete(Left[Throwable, V](err))
-                     _ <- ex.registerCompletion(id, idClosure)
-                   } yield ()
+                   completionSignal.complete(Left[Throwable, V](err))
                }
         } yield ()
       }

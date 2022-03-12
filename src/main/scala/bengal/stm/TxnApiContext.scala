@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 Greg von Nessi
+ * Copyright 2020-2022 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,9 +38,12 @@ private[stm] trait TxnApiContext[F[_]] {
     liftSuccess(TxnPure(() => value))
 
   def waitFor(predicate: => Boolean): Txn[Unit] =
-    if (predicate) unit
+    try if (predicate) unit
     else
       liftFailure(TxnRetry)
+    catch {
+      case ex: Throwable => abort(ex)
+    }
 
   def abort(ex: Throwable): Txn[Unit] =
     liftFailure(TxnError(ex))

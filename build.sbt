@@ -1,10 +1,10 @@
-ThisBuild / baseVersion := "0.2.1"
+ThisBuild / baseVersion := "0.3.0"
 ThisBuild / organization := "ai.entrolution"
 ThisBuild / organizationName := "Greg von Nessi"
 ThisBuild / publishGithubUser := "gvonness"
 ThisBuild / publishFullName := "Greg von Nessi"
 ThisBuild / startYear := Some(2020)
-ThisBuild / endYear := Some(2021)
+ThisBuild / endYear := Some(2022)
 
 ThisBuild / homepage := Some(url("https://github.com/gvonness/bengal-stm"))
 ThisBuild / scmInfo := Some(
