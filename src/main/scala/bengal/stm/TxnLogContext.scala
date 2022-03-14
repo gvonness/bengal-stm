@@ -70,12 +70,12 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       F.unit
 
     override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      txnVar.get.map(_ != initial)
+      F.pure(false)
 
     override private[stm] def lock(implicit
         F: Concurrent[F]
     ): F[Option[Semaphore[F]]] =
-      F.pure(Some(txnVar.commitLock))
+      F.pure(None)
 
     override private[stm] def getRegisterRetry(implicit
         F: Concurrent[F]
@@ -164,12 +164,12 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       F.unit
 
     override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      txnVarMap.get.map(_ != initial)
+      F.pure(false)
 
     override private[stm] def lock(implicit
         F: Concurrent[F]
     ): F[Option[Semaphore[F]]] =
-      F.pure(Some(txnVarMap.commitLock))
+      F.pure(None)
 
     override private[stm] def getRegisterRetry(implicit
         F: Concurrent[F]
@@ -263,18 +263,12 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       F.unit
 
     override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      txnVarMap.get(key).map { oValue =>
-        initial
-          .map(iValue => !oValue.contains(iValue))
-          .getOrElse(oValue.isDefined)
-      }
+      F.pure(false)
 
     override private[stm] def lock(implicit
         F: Concurrent[F]
     ): F[Option[Semaphore[F]]] =
-      for {
-        oTxnVar <- txnVarMap.getTxnVar(key)
-      } yield oTxnVar.map(_.commitLock)
+      F.pure(None)
 
     override private[stm] def getRegisterRetry(implicit
         F: Concurrent[F]
@@ -1063,10 +1057,22 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     ): F[TxnLog] =
       F.pure(TxnLogRetry(this))
 
+    // Favor computational efficiency over parallelism here by
+    // using a fold to short-circuit a log check instead of
+    // using existence in a parallel traversal. I.e. we have
+    // enough parallelism in the runtime to ensure good hardware
+    // utilisation
     override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      log.values.toList.parTraverse { entry =>
-        entry.isDirty
-      }.map(_.exists(isdi => isdi))
+      log.values.toList.foldLeft(F.pure(false)) { (i, j) =>
+        for {
+          prev <- i
+          result <- if (prev) {
+                      F.pure(prev)
+                    } else {
+                      j.isDirty
+                    }
+        } yield result
+      }
 
     override private[stm] def idClosure(implicit
         F: Concurrent[F]
