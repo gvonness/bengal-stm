@@ -1113,11 +1113,6 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
           validLog.log.values.toList.parTraverse(_.getRegisterRetry)
         _ <- registerRetries.parTraverse(rr => rr(retrySignal))
       } yield Some(retrySignal)
-
-    override private[stm] def raiseError(ex: Throwable)(implicit
-        F: Concurrent[F]
-    ): F[TxnLog] =
-      F.pure(TxnLogError(ex))
   }
 
   private[stm] case class TxnLogError(ex: Throwable) extends TxnLog
