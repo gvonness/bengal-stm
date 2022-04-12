@@ -27,6 +27,7 @@ import cats.effect.std.Semaphore
 import cats.implicits._
 
 import scala.annotation.nowarn
+import scala.util.{Failure, Success, Try}
 
 private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
@@ -385,61 +386,44 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
   private[stm] sealed trait TxnLog { self =>
 
-    @nowarn
-    private[stm] def getCurrentValue[V](txnVar: TxnVar[V])(implicit
-        F: Concurrent[F]
-    ): F[Option[V]] =
-      F.pure(None)
-
-    @nowarn
-    private[stm] def getCurrentValue[K, V](key: K, txnVarMap: TxnVarMap[K, V])(
-        implicit F: Concurrent[F]
-    ): F[Option[V]] =
-      F.pure(None)
-
-    @nowarn
-    private[stm] def getCurrentValue[K, V](txnVarMap: TxnVarMap[K, V])(implicit
-        F: Concurrent[F]
-    ): F[Map[K, V]] =
-      F.pure(Map())
-
-    @nowarn
     private[stm] def getVar[V](txnVar: TxnVar[V])(implicit
         F: Concurrent[F]
-    ): F[TxnLog] =
-      F.pure(self)
+    ): F[(TxnLog, V)]
 
     @nowarn
-    private[stm] def setVar[V](newValue: V, txnVar: TxnVar[V])(implicit
+    private[stm] def setVar[V](newValue: () => V, txnVar: TxnVar[V])(implicit
         F: Concurrent[F]
     ): F[TxnLog] =
       F.pure(self)
 
     @nowarn
-    private[stm] def getVarMapValue[K, V](key: K, txnVarMap: TxnVarMap[K, V])(
-        implicit F: Concurrent[F]
-    ): F[TxnLog] =
-      F.pure(self)
+    private[stm] def getVarMapValue[K, V](
+        key: () => K,
+        txnVarMap: TxnVarMap[K, V]
+    )(implicit
+        F: Concurrent[F]
+    ): F[(TxnLog, Option[V])] =
+      F.pure((self, None))
 
     @nowarn
     private[stm] def getVarMap[K, V](
         txnVarMap: TxnVarMap[K, V]
     )(implicit
         F: Concurrent[F]
-    ): F[TxnLog] =
-      F.pure(self)
+    ): F[(TxnLog, Map[K, V])] =
+      F.pure(self, Map())
 
     @nowarn
     private[stm] def setVarMap[K, V](
-        newMap: Map[K, V],
+        newMap: () => Map[K, V],
         txnVarMap: TxnVarMap[K, V]
     )(implicit F: Concurrent[F]): F[TxnLog] =
       F.pure(self)
 
     @nowarn
     private[stm] def setVarMapValue[K, V](
-        key: K,
-        newValue: V,
+        key: () => K,
+        newValue: () => V,
         txnVarMap: TxnVarMap[K, V]
     )(implicit
         F: Concurrent[F]
@@ -448,7 +432,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     @nowarn
     private[stm] def modifyVarMapValue[K, V](
-        key: K,
+        key: () => K,
         f: V => V,
         txnVarMap: TxnVarMap[K, V]
     )(implicit
@@ -458,7 +442,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     @nowarn
     private[stm] def deleteVarMapValue[K, V](
-        key: K,
+        key: () => K,
         txnVarMap: TxnVarMap[K, V]
     )(implicit
         F: Concurrent[F]
@@ -498,89 +482,58 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
   private[stm] case class TxnLogValid(log: Map[TxnVarRuntimeId, TxnLogEntry[_]])
       extends TxnLog {
 
-    override private[stm] def getCurrentValue[V](txnVar: TxnVar[V])(implicit
-        F: Concurrent[F]
-    ): F[Option[V]] =
-      F.pure(log.get(txnVar.runtimeId).map(_.get.asInstanceOf[V]))
-
-    // Retrieve the value from the log. If there is no log entry
-    // try to retrieve from the original Txn Map
-    override private[stm] def getCurrentValue[K, V](
-        key: K,
-        txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[Option[V]] =
-      for {
-        rids <- txnVarMap.getRuntimeId(key)
-        logEntries = rids.flatMap(log.get)
-        result <- if (logEntries.nonEmpty) {
-                    F.pure(
-                      logEntries.head.get.asInstanceOf[Option[V]]
-                    )
-                  } else {
-                    txnVarMap.get(key)
-                  }
-      } yield result
-
-    override private[stm] def getCurrentValue[K, V](
-        txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[Map[K, V]] = {
-      val logEntries = log.values.flatMap {
-        case TxnLogReadOnlyVarMapEntry(key, Some(initial), entryMap)
-            if txnVarMap.id == entryMap.id =>
-          Some(key -> initial)
-        case TxnLogUpdateVarMapEntry(key, _, Some(current), entryMap)
-            if txnVarMap.id == entryMap.id =>
-          Some(key -> current)
-        case _ =>
-          None
-      }.toMap.asInstanceOf[Map[K, V]]
-
-      if (log.contains(txnVarMap.runtimeId)) {
-        F.pure(logEntries)
-      } else {
-        txnVarMap.get.map(_ ++ logEntries)
-      }
-    }
+    import TxnLogValid._
 
     override private[stm] def getVar[V](
         txnVar: TxnVar[V]
-    )(implicit F: Concurrent[F]): F[TxnLog] =
+    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
       log.get(txnVar.runtimeId) match {
-        case Some(_) =>
-          F.pure(this)
+        case Some(entry) =>
+          F.pure((this, entry.get.asInstanceOf[V]))
         case None =>
           for {
             v <- txnVar.get
-          } yield this.copy(
-            log + (txnVar.runtimeId -> TxnLogReadOnlyVarEntry(v, txnVar))
+          } yield (this.copy(
+                     log + (txnVar.runtimeId -> TxnLogReadOnlyVarEntry(
+                       v,
+                       txnVar
+                     ))
+                   ),
+                   v
           )
       }
 
-    override private[stm] def setVar[V](newValue: V, txnVar: TxnVar[V])(implicit
+    override private[stm] def setVar[V](
+        newValue: () => V,
+        txnVar: TxnVar[V]
+    )(implicit
         F: Concurrent[F]
     ): F[TxnLog] =
-      log
-        .get(txnVar.runtimeId)
-        .map { entry =>
-          F.pure(
-            this.copy(
-              log + (txnVar.runtimeId -> entry
-                .asInstanceOf[TxnLogEntry[V]]
-                .set(newValue))
-            )
-          )
-        }
-        .getOrElse {
-          txnVar.get.map { v =>
-            this.copy(
-              log + (txnVar.runtimeId -> TxnLogUpdateVarEntry(v,
-                                                              newValue,
-                                                              txnVar
-              ))
-            )
-          }
-        }
-        .map(_.asInstanceOf[TxnLog])
+      Try(newValue()) match {
+        case Success(materializedValue) =>
+          (log.get(txnVar.runtimeId) match {
+            case Some(entry) =>
+              F.pure(
+                this.copy(
+                  log + (txnVar.runtimeId -> entry
+                    .asInstanceOf[TxnLogEntry[V]]
+                    .set(materializedValue))
+                )
+              )
+            case _ =>
+              txnVar.get.map { v =>
+                this.copy(
+                  log + (txnVar.runtimeId -> TxnLogUpdateVarEntry(
+                    v,
+                    materializedValue,
+                    txnVar
+                  ))
+                )
+              }
+          }).map(_.asInstanceOf[TxnLog])
+        case Failure(exception) =>
+          raiseError(exception)
+      }
 
     private def getVarMapValueEntry[K, V](
         key: K,
@@ -633,7 +586,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     override private[stm] def getVarMap[K, V](
         txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[TxnLog] = {
+    )(implicit F: Concurrent[F]): F[(TxnLog, Map[K, V])] = {
       lazy val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] =
         for {
           preTxnEntries <- if (!log.contains(txnVarMap.runtimeId)) {
@@ -647,66 +600,85 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                            } else {
                              F.pure(List())
                            }
-          currentEntries <- getCurrentValue(txnVarMap)
+          currentEntries <- extractMap(txnVarMap, log)
           reads <- currentEntries.keySet.toList.parTraverse { ks =>
                      getVarMapValueEntry(ks, txnVarMap)
                    }
         } yield (preTxnEntries ::: reads).flatten.toMap
 
       log.get(txnVarMap.runtimeId) match {
-        case Some(_) => individualEntries.map(es => this.copy(log ++ es))
+        case Some(_) =>
+          for {
+            entries <- individualEntries
+            newLog = log ++ entries
+            newMap <- extractMap(txnVarMap, newLog)
+          } yield (this.copy(newLog), newMap)
         case None =>
           for {
             v       <- txnVarMap.get
             entries <- individualEntries
-          } yield this.copy(
-            (log ++ entries) + (txnVarMap.runtimeId -> TxnLogReadOnlyVarMapStructureEntry(
-              v,
-              txnVarMap
-            ))
-          )
+            newLog =
+              (log ++ entries) + (txnVarMap.runtimeId -> TxnLogReadOnlyVarMapStructureEntry(
+                v,
+                txnVarMap
+              ))
+            newMap <- extractMap(txnVarMap, newLog)
+          } yield (this.copy(newLog), newMap)
       }
     }
 
     override private[stm] def getVarMapValue[K, V](
-        key: K,
+        key: () => K,
         txnVarMap: TxnVarMap[K, V]
     )(implicit
         F: Concurrent[F]
-    ): F[TxnLog] =
-      for {
-        oTxnVar <- txnVarMap.getTxnVar(key)
-        result <- oTxnVar match {
-                    case Some(txnVar) =>
-                      log.get(txnVar.runtimeId) match {
-                        case Some(_) =>
-                          F.pure(this) //Noop
+    ): F[(TxnLog, Option[V])] =
+      Try(key()) match {
+        case Success(materializedKey) =>
+          for {
+            oTxnVar <- txnVarMap.getTxnVar(materializedKey)
+            result <- oTxnVar match {
+                        case Some(txnVar) =>
+                          log.get(txnVar.runtimeId) match {
+                            case Some(entry) =>
+                              F.pure(
+                                (this, entry.get.asInstanceOf[Option[V]])
+                              ) //Noop
+                            case None =>
+                              for {
+                                txnVal <- txnVar.get
+                              } yield (this.copy(
+                                         log + (txnVar.runtimeId -> TxnLogReadOnlyVarMapEntry(
+                                           materializedKey,
+                                           Some(txnVal),
+                                           txnVarMap
+                                         ))
+                                       ),
+                                       Some(txnVal)
+                              )
+                          }
                         case None =>
                           for {
-                            txnVal <- txnVar.get
-                          } yield this.copy(
-                            log + (txnVar.runtimeId -> TxnLogReadOnlyVarMapEntry(
-                              key,
-                              Some(txnVal),
-                              txnVarMap
-                            ))
-                          )
-                      }
-                    case None =>
-                      for {
-                        rids <- txnVarMap.getRuntimeId(key)
-                      } yield rids.flatMap(log.get) match {
-                        case _ :: Nil =>
-                          this //Noop
-                        case _ =>
-                          TxnLogError {
-                            new RuntimeException(
-                              s"Tried to read non-existent key $key in transactional map"
-                            )
+                            rids <- txnVarMap.getRuntimeId(
+                                      materializedKey
+                                    )
+                          } yield rids.flatMap(log.get) match {
+                            case entry :: Nil =>
+                              (this, entry.get.asInstanceOf[Option[V]]) //Noop
+                            case _ =>
+                              (TxnLogError {
+                                 new RuntimeException(
+                                   s"Tried to read non-existent key $key in transactional map"
+                                 )
+                               },
+                               None
+                              )
                           }
                       }
-                  }
-      } yield result
+          } yield result
+        case Failure(exception) =>
+          raiseError(exception).map(log => (log, None))
+      }
 
     private def setVarMapValueEntry[K, V](
         key: K,
@@ -828,224 +800,247 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       } yield result
 
     override private[stm] def setVarMap[K, V](
-        newMap: Map[K, V],
+        newMap: () => Map[K, V],
         txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[TxnLog] = {
-      val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] = for {
-        currentMap <- getCurrentValue(txnVarMap)
-        deletions <-
-          (currentMap.keySet -- newMap.keySet).toList.parTraverse { ks =>
-            deleteVarMapValueEntry(ks, txnVarMap)
-          }
-        updates <- newMap.toList.parTraverse { kv =>
-                     setVarMapValueEntry(kv._1, kv._2, txnVarMap)
-                   }
-      } yield (deletions ::: updates).flatten.toMap
+    )(implicit F: Concurrent[F]): F[TxnLog] =
+      Try(newMap()) match {
+        case Success(materializedNewMap) =>
+          val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] = for {
+            currentMap <- extractMap(txnVarMap, log)
+            deletions <-
+              (currentMap.keySet -- materializedNewMap.keySet).toList.parTraverse {
+                ks =>
+                  deleteVarMapValueEntry(ks, txnVarMap)
+              }
+            updates <- materializedNewMap.toList.parTraverse { kv =>
+                         setVarMapValueEntry(kv._1, kv._2, txnVarMap)
+                       }
+          } yield (deletions ::: updates).flatten.toMap
 
-      (log.get(txnVarMap.runtimeId) match {
-        case Some(entry) =>
-          individualEntries.map { entries =>
-            this.copy(
-              (log ++ entries) + (txnVarMap.runtimeId -> entry
-                .asInstanceOf[TxnLogEntry[Map[K, V]]]
-                .set(newMap))
-            )
-          }
-        case _ =>
-          for {
-            v       <- txnVarMap.get
-            entries <- individualEntries
-          } yield this.copy(
-            (log ++ entries) + (txnVarMap.runtimeId -> TxnLogUpdateVarMapStructureEntry(
-              v,
-              newMap,
-              txnVarMap
-            ))
-          )
-      }).map(_.asInstanceOf[TxnLog])
-    }
+          (log.get(txnVarMap.runtimeId) match {
+            case Some(entry) =>
+              individualEntries.map { entries =>
+                this.copy(
+                  (log ++ entries) + (txnVarMap.runtimeId -> entry
+                    .asInstanceOf[TxnLogEntry[Map[K, V]]]
+                    .set(materializedNewMap))
+                )
+              }
+            case _ =>
+              for {
+                v       <- txnVarMap.get
+                entries <- individualEntries
+              } yield this.copy(
+                (log ++ entries) + (txnVarMap.runtimeId -> TxnLogUpdateVarMapStructureEntry(
+                  v,
+                  materializedNewMap,
+                  txnVarMap
+                ))
+              )
+          }).map(_.asInstanceOf[TxnLog])
+        case Failure(exception) =>
+          raiseError(exception)
+      }
 
     override private[stm] def setVarMapValue[K, V](
-        key: K,
-        newValue: V,
+        key: () => K,
+        newValue: () => V,
         txnVarMap: TxnVarMap[K, V]
     )(implicit F: Concurrent[F]): F[TxnLog] =
-      txnVarMap
-        .getTxnVar(key)
-        .flatMap {
-          case Some(txnVar) =>
-            log.get(txnVar.runtimeId) match {
-              case Some(entry) =>
-                F.pure(
-                  this.copy(
-                    log + (txnVar.runtimeId -> entry
-                      .asInstanceOf[TxnLogEntry[Option[V]]]
-                      .set(Some(newValue)))
-                  )
-                )
-              case None =>
-                txnVar.get.map { v =>
-                  if (v != newValue) {
-                    this.copy(
-                      log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
-                        key,
-                        Some(v),
-                        Some(newValue),
-                        txnVarMap
-                      ))
-                    )
-                  } else {
-                    this
-                  }
-                }
-            }
-          case None =>
-            // The txnVar may have been set to be created in this transaction
-            txnVarMap.getRuntimeId(key).map { rids =>
-              rids.flatMap(rid => log.get(rid).map((rid, _))) match {
-                case (rid, entry) :: _ =>
-                  this.copy(
-                    log + (rid -> entry
-                      .asInstanceOf[TxnLogEntry[Option[V]]]
-                      .set(Some(newValue)))
-                  )
-                case _ =>
-                  this.copy(
-                    log + (rids.head -> TxnLogUpdateVarMapEntry(key,
-                                                                None,
-                                                                Some(newValue),
-                                                                txnVarMap
-                    ))
-                  )
-              }
-            }
-        }
-        .map(_.asInstanceOf[TxnLog])
-
-    override private[stm] def modifyVarMapValue[K, V](
-        key: K,
-        f: V => V,
-        txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[TxnLog] =
-      txnVarMap
-        .getTxnVar(key)
-        .flatMap {
-          case Some(txnVar) =>
-            (log.get(txnVar.runtimeId) match {
-              case Some(entry) =>
-                F.pure {
-                  entry.get.asInstanceOf[Option[V]] match {
-                    case Some(v) =>
+      Try((key(), newValue())) match {
+        case Success((materializedKey, materializedNewValue)) =>
+          txnVarMap
+            .getTxnVar(materializedKey)
+            .flatMap {
+              case Some(txnVar) =>
+                log.get(txnVar.runtimeId) match {
+                  case Some(entry) =>
+                    F.pure(
                       this.copy(
                         log + (txnVar.runtimeId -> entry
                           .asInstanceOf[TxnLogEntry[Option[V]]]
-                          .set(Some(f(v))))
+                          .set(Some(materializedNewValue)))
                       )
-                    case None =>
-                      TxnLogError {
-                        new RuntimeException(
-                          s"Key $key not found for modification"
+                    )
+                  case None =>
+                    txnVar.get.map { v =>
+                      if (v != materializedNewValue) {
+                        this.copy(
+                          log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
+                            materializedKey,
+                            Some(v),
+                            Some(materializedNewValue),
+                            txnVarMap
+                          ))
                         )
+                      } else {
+                        this
                       }
-                  }
+                    }
                 }
               case None =>
-                txnVar.get.map { v =>
-                  this.copy(
-                    log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
-                      key,
-                      Some(v),
-                      Some(f(v)),
-                      txnVarMap
-                    ))
-                  )
+                // The txnVar may have been set to be created in this transaction
+                txnVarMap.getRuntimeId(materializedKey).map { rids =>
+                  rids.flatMap(rid => log.get(rid).map((rid, _))) match {
+                    case (rid, entry) :: _ =>
+                      this.copy(
+                        log + (rid -> entry
+                          .asInstanceOf[TxnLogEntry[Option[V]]]
+                          .set(Some(materializedNewValue)))
+                      )
+                    case _ =>
+                      this.copy(
+                        log + (rids.head -> TxnLogUpdateVarMapEntry(
+                          materializedKey,
+                          None,
+                          Some(materializedNewValue),
+                          txnVarMap
+                        ))
+                      )
+                  }
                 }
-            }).map(_.asInstanceOf[TxnLog])
-          case None =>
-            // The txnVar may have been set to be created in this transaction
-            txnVarMap
-              .getRuntimeId(key)
-              .map { rids =>
-                rids.flatMap(rid => log.get(rid).map((rid, _))) match {
-                  case (rid, entry) :: _ =>
-                    val castEntry: TxnLogEntry[Option[V]] =
-                      entry.asInstanceOf[TxnLogEntry[Option[V]]]
-                    castEntry.get match {
-                      case Some(v) =>
-                        this.copy(
-                          log + (rid -> castEntry
-                            .set(Some(f(v))))
-                        )
-                      case None =>
-                        TxnLogError {
+            }
+            .map(_.asInstanceOf[TxnLog])
+        case Failure(exception) =>
+          raiseError(exception)
+      }
+
+    override private[stm] def modifyVarMapValue[K, V](
+        key: () => K,
+        f: V => V,
+        txnVarMap: TxnVarMap[K, V]
+    )(implicit F: Concurrent[F]): F[TxnLog] =
+      Try(key()) match {
+        case Success(materializedKey) =>
+          txnVarMap
+            .getTxnVar(materializedKey)
+            .flatMap {
+              case Some(txnVar) =>
+                (log.get(txnVar.runtimeId) match {
+                  case Some(entry) =>
+                    F.pure {
+                      entry.get.asInstanceOf[Option[V]] match {
+                        case Some(v) =>
+                          this.copy(
+                            log + (txnVar.runtimeId -> entry
+                              .asInstanceOf[TxnLogEntry[Option[V]]]
+                              .set(Some(f(v))))
+                          )
+                        case None =>
+                          TxnLogError(
+                            new RuntimeException(
+                              s"Key $key not found for modification"
+                            )
+                          )
+                      }
+                    }
+                  case None =>
+                    txnVar.get.map { v =>
+                      this.copy(
+                        log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
+                          materializedKey,
+                          Some(v),
+                          Some(f(v)),
+                          txnVarMap
+                        ))
+                      )
+                    }
+                }).map(_.asInstanceOf[TxnLog])
+              case None =>
+                // The txnVar may have been set to be created in this transaction
+                txnVarMap
+                  .getRuntimeId(materializedKey)
+                  .map { rids =>
+                    rids.flatMap(rid => log.get(rid).map((rid, _))) match {
+                      case (rid, entry) :: _ =>
+                        val castEntry: TxnLogEntry[Option[V]] =
+                          entry.asInstanceOf[TxnLogEntry[Option[V]]]
+                        castEntry.get match {
+                          case Some(v) =>
+                            this.copy(
+                              log + (rid -> castEntry
+                                .set(Some(f(v))))
+                            )
+                          case None =>
+                            TxnLogError(
+                              new RuntimeException(
+                                s"Key $key not found for modification"
+                              )
+                            )
+                        }
+                      case _ =>
+                        TxnLogError(
                           new RuntimeException(
                             s"Key $key not found for modification"
                           )
-                        }
+                        )
                     }
-                  case _ =>
-                    TxnLogError {
-                      new RuntimeException(
-                        s"Key $key not found for modification"
-                      )
-                    }
-                }
-              }
-              .map(_.asInstanceOf[TxnLog])
-        }
+                  }
+                  .map(_.asInstanceOf[TxnLog])
+            }
+        case Failure(exception) =>
+          raiseError(exception)
+      }
 
     override private[stm] def deleteVarMapValue[K, V](
-        key: K,
+        key: () => K,
         txnVarMap: TxnVarMap[K, V]
     )(implicit
         F: Concurrent[F]
     ): F[TxnLog] =
-      for {
-        oTxnVar <- txnVarMap.getTxnVar(key)
-        result <- oTxnVar match {
-                    case Some(txnVar) =>
-                      log.get(txnVar.runtimeId) match {
-                        case Some(entry) =>
-                          F.pure(
-                            this.copy(
-                              log + (txnVar.runtimeId -> entry
-                                .asInstanceOf[TxnLogEntry[Option[V]]]
-                                .set(None))
-                            )
-                          )
+      Try(key()) match {
+        case Success(materializedKey) =>
+          for {
+            oTxnVar <- txnVarMap.getTxnVar(materializedKey)
+            result <- oTxnVar match {
+                        case Some(txnVar) =>
+                          log.get(txnVar.runtimeId) match {
+                            case Some(entry) =>
+                              F.pure(
+                                this.copy(
+                                  log + (txnVar.runtimeId -> entry
+                                    .asInstanceOf[TxnLogEntry[Option[V]]]
+                                    .set(None))
+                                )
+                              )
+                            case None =>
+                              for {
+                                txnVal <- txnVar.get
+                              } yield this.copy(
+                                log + (txnVar.runtimeId ->
+                                  TxnLogUpdateVarMapEntry(materializedKey,
+                                                          Some(txnVal),
+                                                          None,
+                                                          txnVarMap
+                                  ))
+                              )
+                          }
                         case None =>
                           for {
-                            txnVal <- txnVar.get
-                          } yield this.copy(
-                            log + (txnVar.runtimeId ->
-                              TxnLogUpdateVarMapEntry(key,
-                                                      Some(txnVal),
-                                                      None,
-                                                      txnVarMap
-                              ))
-                          )
-                      }
-                    case None =>
-                      for {
-                        rids <- txnVarMap.getRuntimeId(key)
-                      } yield rids.flatMap(rid =>
-                        log.get(rid).map((rid, _))
-                      ) match {
-                        case (rid, entry) :: _ =>
-                          this.copy(
-                            log + (rid -> entry
-                              .asInstanceOf[TxnLogEntry[Option[V]]]
-                              .set(None))
-                          )
-                        case _ => // Throw error to be consistent with read behaviour
-                          TxnLogError {
-                            new RuntimeException(
-                              s"Tried to remove non-existent key $key in transactional map"
-                            )
+                            rids <- txnVarMap.getRuntimeId(
+                                      materializedKey
+                                    )
+                          } yield rids.flatMap(rid =>
+                            log.get(rid).map((rid, _))
+                          ) match {
+                            case (rid, entry) :: _ =>
+                              this.copy(
+                                log + (rid -> entry
+                                  .asInstanceOf[TxnLogEntry[Option[V]]]
+                                  .set(None))
+                              )
+                            case _ => // Throw error to be consistent with read behaviour
+                              TxnLogError {
+                                new RuntimeException(
+                                  s"Tried to remove non-existent key $key in transactional map"
+                                )
+                              }
                           }
                       }
-                  }
-      } yield result
+          } yield result
+        case Failure(exception) =>
+          raiseError(exception)
+      }
 
     override private[stm] def raiseError(ex: Throwable)(implicit
         F: Concurrent[F]
@@ -1097,9 +1092,43 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
   private[stm] object TxnLogValid {
     private[stm] val empty: TxnLogValid = TxnLogValid(Map())
+
+    private def extractMap[K, V](
+        txnVarMap: TxnVarMap[K, V],
+        log: Map[TxnVarRuntimeId, TxnLogEntry[_]]
+    )(implicit F: Concurrent[F]): F[Map[K, V]] = {
+      val logEntries = log.values.flatMap {
+        case TxnLogReadOnlyVarMapEntry(key, Some(initial), entryMap)
+            if txnVarMap.id == entryMap.id =>
+          Some(key -> initial)
+        case TxnLogUpdateVarMapEntry(key, _, Some(current), entryMap)
+            if txnVarMap.id == entryMap.id =>
+          Some(key -> current)
+        case _ =>
+          None
+      }.toMap.asInstanceOf[Map[K, V]]
+
+      if (log.contains(txnVarMap.runtimeId)) {
+        F.pure(logEntries)
+      } else {
+        txnVarMap.get.map(_ ++ logEntries)
+      }
+    }
   }
 
   private[stm] case class TxnLogRetry(validLog: TxnLogValid) extends TxnLog {
+
+    override private[stm] def getVar[V](
+        txnVar: TxnVar[V]
+    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
+      validLog.log.get(txnVar.runtimeId) match {
+        case Some(entry) =>
+          F.pure((this, entry.get.asInstanceOf[V]))
+        case None =>
+          for {
+            v <- txnVar.get
+          } yield (this, v)
+      }
 
     override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
       validLog.isDirty
@@ -1115,5 +1144,11 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       } yield Some(retrySignal)
   }
 
-  private[stm] case class TxnLogError(ex: Throwable) extends TxnLog
+  private[stm] case class TxnLogError(ex: Throwable) extends TxnLog {
+
+    override private[stm] def getVar[V](
+        txnVar: TxnVar[V]
+    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
+      txnVar.get.map(v => (this, v))
+  }
 }

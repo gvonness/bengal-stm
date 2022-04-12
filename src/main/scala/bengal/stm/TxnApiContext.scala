@@ -21,6 +21,7 @@ import cats.effect.kernel.Concurrent
 import cats.free.Free
 
 import scala.annotation.nowarn
+import scala.util.{Failure, Success, Try}
 
 private[stm] trait TxnApiContext[F[_]] {
   this: TxnAdtContext[F] with TxnStateEntityContext[F] =>
@@ -38,11 +39,13 @@ private[stm] trait TxnApiContext[F[_]] {
     liftSuccess(TxnPure(() => value))
 
   def waitFor(predicate: => Boolean): Txn[Unit] =
-    try if (predicate) unit
-    else
-      liftFailure(TxnRetry)
-    catch {
-      case ex: Throwable => abort(ex)
+    Try(predicate) match {
+      case Success(true) =>
+        unit
+      case Success(_) =>
+        liftFailure(TxnRetry)
+      case Failure(exception) =>
+        abort(exception)
     }
 
   def abort(ex: Throwable): Txn[Unit] =
@@ -53,35 +56,35 @@ private[stm] trait TxnApiContext[F[_]] {
   ): Txn[V] =
     liftSuccess(TxnHandleError(() => fa, f))
 
-  private[stm] def getTxnVar[V](txnVar: => TxnVar[V]): Txn[V] =
-    liftSuccess(TxnGetVar(() => txnVar))
+  private[stm] def getTxnVar[V](txnVar: TxnVar[V]): Txn[V] =
+    liftSuccess(TxnGetVar(txnVar))
 
   private[stm] def setTxnVar[V](
       newValue: => V,
-      txnVar: => TxnVar[V]
+      txnVar: TxnVar[V]
   ): Txn[Unit] =
-    liftSuccess(TxnSetVar(() => newValue, () => txnVar))
+    liftSuccess(TxnSetVar(() => newValue, txnVar))
 
-  private[stm] def modifyTxnVar[V](f: V => V, txnVar: => TxnVar[V]): Txn[Unit] =
+  private[stm] def modifyTxnVar[V](f: V => V, txnVar: TxnVar[V]): Txn[Unit] =
     for {
       value <- getTxnVar(txnVar)
       _     <- setTxnVar(f(value), txnVar)
     } yield ()
 
   private[stm] def getTxnVarMap[K, V](
-      txnVarMap: => TxnVarMap[K, V]
+      txnVarMap: TxnVarMap[K, V]
   ): Txn[Map[K, V]] =
-    liftSuccess(TxnGetVarMap(() => txnVarMap))
+    liftSuccess(TxnGetVarMap(txnVarMap))
 
   private[stm] def setTxnVarMap[K, V](
       newValueMap: => Map[K, V],
-      txnVarMap: => TxnVarMap[K, V]
+      txnVarMap: TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnSetVarMap(() => newValueMap, () => txnVarMap))
+    liftSuccess(TxnSetVarMap(() => newValueMap, txnVarMap))
 
   private[stm] def modifyTxnVarMap[K, V](
       f: Map[K, V] => Map[K, V],
-      txnVarMap: => TxnVarMap[K, V]
+      txnVarMap: TxnVarMap[K, V]
   ): Txn[Unit] =
     for {
       value <- getTxnVarMap(txnVarMap)
@@ -91,27 +94,27 @@ private[stm] trait TxnApiContext[F[_]] {
   @nowarn
   private[stm] def getTxnVarMapValue[K, V](
       key: => K,
-      txnVarMap: => TxnVarMap[K, V]
+      txnVarMap: TxnVarMap[K, V]
   )(implicit F: Concurrent[F]): Txn[Option[V]] =
-    liftSuccess(TxnGetVarMapValue(() => key, () => txnVarMap))
+    liftSuccess(TxnGetVarMapValue(() => key, txnVarMap))
 
   private[stm] def setTxnVarMapValue[K, V](
       key: => K,
       newValue: => V,
-      txnVarMap: => TxnVarMap[K, V]
+      txnVarMap: TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnSetVarMapValue(() => key, () => newValue, () => txnVarMap))
+    liftSuccess(TxnSetVarMapValue(() => key, () => newValue, txnVarMap))
 
   private[stm] def modifyTxnVarMapValue[K, V](
       key: => K,
       f: V => V,
-      txnVarMap: => TxnVarMap[K, V]
+      txnVarMap: TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnModifyVarMapValue(() => key, f, () => txnVarMap))
+    liftSuccess(TxnModifyVarMapValue(() => key, f, txnVarMap))
 
   private[stm] def removeTxnVarMapValue[K, V](
       key: => K,
-      txnVarMap: => TxnVarMap[K, V]
+      txnVarMap: TxnVarMap[K, V]
   ): Txn[Unit] =
-    liftSuccess(TxnDeleteVarMapValue(() => key, () => txnVarMap))
+    liftSuccess(TxnDeleteVarMapValue(() => key, txnVarMap))
 }
