@@ -200,14 +200,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 noOp[TxnLog].map(_.asInstanceOf[V])
               case TxnPure(value) =>
                 StateT[F, TxnLog, V] { s =>
-                  F.pure {
-                    Try(value()) match {
-                      case Success(materializedValue) =>
-                        (s, materializedValue)
-                      case _ =>
-                        (s, ().asInstanceOf[V])
-                    }
-                  }
+                  s.pure(value)
                 }
               case TxnGetVar(txnVar) =>
                 StateT[F, TxnLog, V] { s =>

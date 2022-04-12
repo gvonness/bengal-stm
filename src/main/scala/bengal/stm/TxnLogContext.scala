@@ -391,6 +391,12 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     ): F[(TxnLog, V)]
 
     @nowarn
+    private[stm] def pure[V](value: () => V)(implicit
+        F: Concurrent[F]
+    ): F[(TxnLog, V)] =
+      F.pure((self, ().asInstanceOf[V]))
+
+    @nowarn
     private[stm] def setVar[V](newValue: () => V, txnVar: TxnVar[V])(implicit
         F: Concurrent[F]
     ): F[TxnLog] =
@@ -483,6 +489,18 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       extends TxnLog {
 
     import TxnLogValid._
+
+    override private[stm] def pure[V](
+        value: () => V
+    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
+      F.pure {
+        Try(value()) match {
+          case Success(v) =>
+            (this, v)
+          case Failure(exception) =>
+            (TxnLogError(exception), ().asInstanceOf[V])
+        }
+      }
 
     override private[stm] def getVar[V](
         txnVar: TxnVar[V]
