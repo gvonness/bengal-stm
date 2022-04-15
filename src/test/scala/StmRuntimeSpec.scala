@@ -18,6 +18,8 @@ package ai.entrolution
 
 import org.scalatest.flatspec.AnyFlatSpec
 
+import scala.collection.immutable.Queue
+
 class StmRuntimeSpec extends AnyFlatSpec {
   "commit" should "correctly execute multiple programs" in new StmRuntimeFixture {
     import stm._
@@ -71,6 +73,41 @@ class StmRuntimeSpec extends AnyFlatSpec {
         result2  <- result2f.joinWithNever // -6
         result1  <- result1f.joinWithNever // 131
       } yield result1 + result2).unsafeRunSync() // 125
+    }
+  }
+
+  "commit" should "correctly execute with transient evaluation errors in the static analysis" in new StmRuntimeFixture {
+    import stm._
+
+    val txnVarQueue: TxnVar[Queue[Int]] =
+      TxnVar.of(Queue[Int]()).unsafeRunSync()
+
+    val txnVar: TxnVar[Int] =
+      TxnVar.of(0).unsafeRunSync()
+
+    val program1: Txn[Unit] = for {
+      queueResult <- txnVarQueue.get
+      _           <- waitFor(queueResult.nonEmpty)
+      result      <- stm.pure(queueResult.dequeue)
+      _           <- txnVarQueue.set(result._2)
+      _           <- txnVar.set(result._1)
+    } yield ()
+
+    val program2: Txn[Unit] = for {
+      _ <- txnVarQueue.modify(_.enqueue(27))
+      _ <- txnVarQueue.modify(_.enqueue(18))
+      _ <- txnVarQueue.modify(_.enqueue(28))
+    } yield () // -6
+
+    assertResult((27, Queue(18, 28))) {
+      (for {
+        result1f    <- program1.commit.start
+        result2f    <- program2.commit.start
+        _           <- result2f.joinWithNever
+        _           <- result1f.joinWithNever
+        result      <- txnVar.get.commit
+        resultQueue <- txnVarQueue.get.commit
+      } yield (result, resultQueue)).unsafeRunSync()
     }
   }
 

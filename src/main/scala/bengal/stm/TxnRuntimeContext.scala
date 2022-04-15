@@ -324,6 +324,13 @@ private[stm] trait TxnRuntimeContext[F[_]] {
           txn
             .foldMap[IdClosureStore](staticAnalysisCompiler)
             .run(IdClosure.empty)
+            // Sometimes the static analysis will unavoidably throw
+            // due to impossible casts being attempted. In this case, we
+            // fall back to returning a trivial closure, which will result
+            // in a blindly optimistic scheduling. However, if this should result
+            // in a dirty log, the log will provide a valid IdClosure refinement
+            // to better inform the scheduling on the follow-up attempt
+            .handleErrorWith(_ => F.pure((IdClosure.empty, ().asInstanceOf[V])))
         completionSignal <- Deferred[F, Either[Throwable, V]]
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-
