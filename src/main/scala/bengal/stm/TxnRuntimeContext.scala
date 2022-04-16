@@ -232,8 +232,19 @@ private[stm] trait TxnRuntimeContext[F[_]] {
 
     private[stm] def getTxnLogResult(implicit
         F: Concurrent[F]
-    ): F[(TxnLog, V)] =
-      txn.foldMap[TxnLogStore](txnLogCompiler).run(TxnLogValid.empty)
+    ): F[(TxnLog, Option[V])] =
+      txn
+        .foldMap[TxnLogStore](txnLogCompiler)
+        .run(TxnLogValid.empty)
+        .map { res =>
+          (res._1, Option(res._2))
+        }
+        .handleErrorWith {
+          case TxnRetryException(log) =>
+            F.pure((TxnLogRetry(log), None))
+          case ex =>
+            F.pure((TxnLogError(ex), None))
+        }
 
     private def commit(implicit F: Concurrent[F]): F[TxnResult] =
       for {
@@ -245,7 +256,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                         log.withLock {
                           F.ifM[Option[V]](log.isDirty)(
                             F.pure(None),
-                            log.commit.as(Some(logValue))
+                            log.commit.as(logValue)
                           )
                         }
                       }.flatMap { s =>
@@ -324,13 +335,21 @@ private[stm] trait TxnRuntimeContext[F[_]] {
           txn
             .foldMap[IdClosureStore](staticAnalysisCompiler)
             .run(IdClosure.empty)
+            .map { res =>
+              (res._1, Option(res._2))
+            }
             // Sometimes the static analysis will unavoidably throw
             // due to impossible casts being attempted. In this case, we
-            // fall back to returning a trivial closure, which will result
-            // in a blindly optimistic scheduling. However, if this should result
-            // in a dirty log, the log will provide a valid IdClosure refinement
-            // to better inform the scheduling on the follow-up attempt
-            .handleErrorWith(_ => F.pure((IdClosure.empty, ().asInstanceOf[V])))
+            // leverage the closure gathered to the point in the free recursion
+            // up to where the error is generated. In the worst case,
+            // we fall back to blindly optimistic scheduling (for the
+            // first transaction attempt)
+            .handleErrorWith {
+              case StaticAnalysisShortCircuitException(idClosure) =>
+                F.pure((idClosure, None))
+              case _ =>
+                F.pure((IdClosure.empty, None))
+            }
         completionSignal <- Deferred[F, Either[Throwable, V]]
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-

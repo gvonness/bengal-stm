@@ -35,6 +35,10 @@ private[stm] trait TxnCompilerContext[F[_]] {
   private def noOp[S](implicit F: Concurrent[F]): StateT[F, S, Unit] =
     StateT[F, S, Unit](s => F.pure((s, ())))
 
+  private[stm] case class StaticAnalysisShortCircuitException(
+      idClosure: IdClosure
+  ) extends RuntimeException
+
   private[stm] def staticAnalysisCompiler(implicit
       F: Concurrent[F]
   ): FunctionK[TxnOrErr, IdClosureStore] =
@@ -53,7 +57,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                       case Success(materializedValue) =>
                         (s, materializedValue)
                       case _ =>
-                        (s, ().asInstanceOf[V])
+                        throw StaticAnalysisShortCircuitException(s)
                     }
                   }
                 }
@@ -97,7 +101,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         )
                         .getOrElse((s.addReadId(eRId), value.asInstanceOf[V]))
                     case _ =>
-                      F.pure((s, ().asInstanceOf[V]))
+                      throw StaticAnalysisShortCircuitException(s)
                   }
                 }
               case adt: TxnSetVar[_] =>

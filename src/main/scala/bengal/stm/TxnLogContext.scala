@@ -1065,10 +1065,17 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     ): F[TxnLog] =
       F.pure(TxnLogError(ex))
 
+    // We throw here to short-circuit the Free compiler recursion.
+    // There is no point in processing anything else beyond the retry,
+    // which could lead to impossible casts being attempted, which would
+    // just throw anyway.
+    // Note that we do not throw on `raiseError` as the Txn may contain
+    // a handleError entry; i.e. we can not simply short-circuit the
+    // recursion.
     override private[stm] def scheduleRetry(implicit
         F: Concurrent[F]
     ): F[TxnLog] =
-      F.pure(TxnLogRetry(this))
+      throw TxnRetryException(this)
 
     // Favor computational efficiency over parallelism here by
     // using a fold to short-circuit a log check instead of
@@ -1169,4 +1176,8 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
       txnVar.get.map(v => (this, v))
   }
+
+  private[stm] case class TxnRetryException(validLog: TxnLogValid)
+      extends RuntimeException
+
 }
