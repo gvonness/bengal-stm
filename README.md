@@ -128,5 +128,7 @@ Also, while APIs are quite similar, there are some differences between Bengal an
 ### Why isn't there a way to bypass `waitFor`?
 I wanted `waitFor` to have a clear semantic delineation from an `if` statement in the monadic construction. While there is arguably a missed opportunity to define a canonical Semigroup via such a bypass, I have opted for a simpler API (for the time being).
 
+In addition to this, Bengal short-circuits the rest of the monadic evaluation when encountering a failed `waitFor` predicate. This performance optimisation is not possible if we need to search the computation spec for a `waitFor` bypass.
+
 ### Why 'Bengal'?
 Bengals are a very playful and active cat breed. I figured the name worked for something built on Cats ;).
