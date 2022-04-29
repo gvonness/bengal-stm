@@ -28,6 +28,7 @@ import cats.implicits._
 
 import scala.annotation.nowarn
 import scala.collection.mutable.{ListBuffer, Map => MutableMap}
+import scala.collection.concurrent.{TrieMap, Map => ConcurrentMap}
 import scala.concurrent.duration.FiniteDuration
 
 private[stm] trait TxnRuntimeContext[F[_]] {
@@ -57,8 +58,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       runningSemaphore: Semaphore[F],
       waitingBuffer: ListBuffer[AnalysedTxn[_]],
       waitingSemaphore: Semaphore[F],
-      closureTallies: Ref[F, IdClosureTallies],
-      closureSemaphore: Semaphore[F],
+      closureTallies: IdClosureTallies,
       schedulerTrigger: Ref[F, Deferred[F, Unit]],
       retryWaitMaxDuration: FiniteDuration,
       maxWaitingToProcessInLoop: Int
@@ -77,12 +77,12 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         idClosure: IdClosure
     )(implicit F: Concurrent[F]): F[Unit] =
       for {
-        _ <- waitingSemaphore.acquire
-        _ <- withLock(runningSemaphore)(F.pure(runningMap -= txnId))
-        _ <- withLock(closureSemaphore) {
-               closureTallies.update(_.removeIdClosure(idClosure))
-             }
-        _ <- if (waitingBuffer.nonEmpty) triggerReprocessing else F.unit
+        closureFib <- F.pure(closureTallies.removeIdClosure(idClosure)).start
+        _          <- waitingSemaphore.acquire
+        _          <- withLock(runningSemaphore)(F.pure(runningMap -= txnId))
+        _ <- if (waitingBuffer.nonEmpty)
+               closureFib.joinWithNever >> triggerReprocessing
+             else F.unit
         _ <- waitingSemaphore.release
       } yield ()
 
@@ -92,9 +92,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- waitingSemaphore.acquire
         _ <- F.pure(waitingBuffer.append(analysedTxn))
-        _ <- withLock(closureSemaphore) {
-               closureTallies.update(_.addIdClosure(analysedTxn.idClosure))
-             }
+        _ <- F.pure(closureTallies.addIdClosure(analysedTxn.idClosure))
         _ <- triggerReprocessing
         _ <- waitingSemaphore.release
       } yield ()
@@ -105,11 +103,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- waitingSemaphore.acquire
         _ <- F.pure(waitingBuffer.prepend(analysedTxn))
-        _ <- withLock(closureSemaphore) {
-               closureTallies.update(idts =>
-                 idts.addIdClosure(analysedTxn.idClosure)
-               )
-             }
+        _ <- F.pure(closureTallies.addIdClosure(analysedTxn.idClosure))
         _ <- triggerReprocessing
         _ <- waitingSemaphore.release
       } yield ()
@@ -171,7 +165,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         F.pure(stillWaiting.foreach(waitingBuffer.prepend))
       }
 
-    private[stm] def reprocessWaiting(implicit TF: Temporal[F]): F[Unit] =
+    private[stm] def reprocessWaiting(implicit
+        F: Concurrent[F],
+        TF: Temporal[F]
+    ): F[Unit] =
       for {
         newTrigger <- Deferred[F, Unit]
         _          <- schedulerTrigger.get.flatMap(_.get)
@@ -179,9 +176,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- schedulerTrigger.set(newTrigger)
         _ <- for {
                runningClosure <- getRunningClosure
-               totalClosure <- withLock(closureSemaphore) {
-                                 closureTallies.get.map(_.getIdClosure)
-                               }.map(_.mergeWith(runningClosure))
+               currentClosure <- F.pure(closureTallies.getIdClosure)
+               totalClosure = currentClosure.mergeWith(runningClosure)
                _ <- idClosureAnalysisRecursion(
                       runningClosure,
                       totalClosure
@@ -203,9 +199,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     private[stm] def apply(
         runningSemaphore: Semaphore[F],
         waitingSemaphore: Semaphore[F],
-        closureSemaphore: Semaphore[F],
         schedulerTrigger: Ref[F, Deferred[F, Unit]],
-        closureTallies: Ref[F, IdClosureTallies],
         retryWaitMaxDuration: FiniteDuration,
         maxWaitingToProcessInLoop: Int
     ): TxnScheduler =
@@ -214,8 +208,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         runningSemaphore = runningSemaphore,
         waitingBuffer = ListBuffer(),
         waitingSemaphore = waitingSemaphore,
-        closureTallies = closureTallies,
-        closureSemaphore = closureSemaphore,
+        closureTallies = IdClosureTallies.empty,
         schedulerTrigger = schedulerTrigger,
         retryWaitMaxDuration = retryWaitMaxDuration,
         maxWaitingToProcessInLoop = maxWaitingToProcessInLoop
@@ -398,66 +391,66 @@ private[stm] object TxnRuntimeContext {
   }
 
   private[stm] case class IdClosureTallies(
-      readIdTallies: Map[TxnVarRuntimeId, Int],
-      updatedIdTallies: Map[TxnVarRuntimeId, Int]
+      private val readIdTallies: ConcurrentMap[TxnVarRuntimeId, Int],
+      private val updatedIdTallies: ConcurrentMap[TxnVarRuntimeId, Int]
   ) {
 
-    private def addReadId(id: TxnVarRuntimeId): IdClosureTallies =
-      this.copy(readIdTallies =
-        readIdTallies + (id -> (readIdTallies.getOrElse(id, 0) + 1))
-      )
+    private def addReadId(id: TxnVarRuntimeId): Unit =
+      readIdTallies += (id -> (readIdTallies.getOrElse(id, 0) + 1))
 
-    private def removeReadId(id: TxnVarRuntimeId): IdClosureTallies = {
+    private def removeReadId(id: TxnVarRuntimeId): Unit = {
       val newValue: Int = readIdTallies.getOrElse(id, 0) - 1
       if (newValue < 1) {
-        this.copy(readIdTallies = readIdTallies - id)
+        readIdTallies -= id
       } else {
-        this.copy(readIdTallies = readIdTallies + (id -> newValue))
+        readIdTallies += (id -> newValue)
       }
     }
 
-    private def addUpdateId(id: TxnVarRuntimeId): IdClosureTallies =
-      this.copy(updatedIdTallies =
-        updatedIdTallies + (id -> (updatedIdTallies.getOrElse(id, 0) + 1))
-      )
+    private def addUpdateId(id: TxnVarRuntimeId): Unit =
+      updatedIdTallies += (id -> (updatedIdTallies.getOrElse(id, 0) + 1))
 
-    private def removeUpdateId(id: TxnVarRuntimeId): IdClosureTallies = {
+    private def removeUpdateId(id: TxnVarRuntimeId): Unit = {
       val newValue: Int = updatedIdTallies.getOrElse(id, 0) - 1
       if (newValue < 1) {
-        this.copy(updatedIdTallies = updatedIdTallies - id)
+        updatedIdTallies -= id
       } else {
-        this.copy(updatedIdTallies = updatedIdTallies + (id -> newValue))
+        updatedIdTallies += (id -> newValue)
       }
     }
 
-    private def addReadIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
-      ids.foldLeft(this)((i, j) => i.addReadId(j))
+    private def addReadIds(ids: Set[TxnVarRuntimeId]): Unit =
+      ids.foreach(addReadId)
 
-    private def removeReadIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
-      ids.foldLeft(this)((i, j) => i.removeReadId(j))
+    private def removeReadIds(ids: Set[TxnVarRuntimeId]): Unit =
+      ids.foreach(removeReadId)
 
-    private def addUpdateIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
-      ids.foldLeft(this)((i, j) => i.addUpdateId(j))
+    private def addUpdateIds(ids: Set[TxnVarRuntimeId]): Unit =
+      ids.foreach(addUpdateId)
 
-    private def removeUpdateIds(ids: Set[TxnVarRuntimeId]): IdClosureTallies =
-      ids.foldLeft(this)((i, j) => i.removeUpdateId(j))
+    private def removeUpdateIds(ids: Set[TxnVarRuntimeId]): Unit =
+      ids.foreach(removeUpdateId)
 
-    private[stm] def addIdClosure(idClosure: IdClosure): IdClosureTallies =
-      this.addReadIds(idClosure.readIds).addUpdateIds(idClosure.updatedIds)
+    private[stm] def addIdClosure(idClosure: IdClosure): Unit = {
+      addReadIds(idClosure.readIds)
+      addUpdateIds(idClosure.updatedIds)
+    }
 
-    private[stm] def removeIdClosure(idClosure: IdClosure): IdClosureTallies =
-      this
-        .removeReadIds(idClosure.readIds)
-        .removeUpdateIds(idClosure.updatedIds)
+    private[stm] def removeIdClosure(idClosure: IdClosure): Unit = {
+      removeReadIds(idClosure.readIds)
+      removeUpdateIds(idClosure.updatedIds)
+    }
 
     private[stm] def getIdClosure: IdClosure =
       IdClosure(
-        readIds = readIdTallies.keySet,
-        updatedIds = updatedIdTallies.keySet
+        readIds = readIdTallies.keySet.toSet,
+        updatedIds = updatedIdTallies.keySet.toSet
       )
   }
 
   private[stm] object IdClosureTallies {
-    private[stm] val empty: IdClosureTallies = IdClosureTallies(Map(), Map())
+
+    private[stm] def empty: IdClosureTallies =
+      IdClosureTallies(TrieMap.empty, TrieMap.empty)
   }
 }

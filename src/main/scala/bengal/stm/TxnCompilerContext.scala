@@ -275,12 +275,9 @@ private[stm] trait TxnCompilerContext[F[_]] {
           case Left(erratum) =>
             erratum match {
               case TxnRetry =>
-                StateT[F, TxnLog, V] {
-                  case validLog: TxnLogValid =>
-                    throw TxnRetryException(validLog)
-                  case s =>
-                    F.pure((s, ().asInstanceOf[V]))
-                }
+                StateT[F, TxnLog, V](
+                  _.scheduleRetry.map((_, ().asInstanceOf[V]))
+                )
               case TxnError(ex) =>
                 StateT[F, TxnLog, V](
                   _.raiseError(ex).map((_, ().asInstanceOf[V]))

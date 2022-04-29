@@ -76,7 +76,7 @@ class StmRuntimeSpec extends AnyFlatSpec {
     }
   }
 
-  "commit" should "correctly execute with transient evaluation errors in the static analysis" in new StmRuntimeFixture {
+  it should "correctly execute with transient evaluation errors in the static analysis" in new StmRuntimeFixture {
     import stm._
 
     val txnVarQueue: TxnVar[Queue[Int]] =

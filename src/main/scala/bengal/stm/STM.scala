@@ -17,7 +17,6 @@
 package ai.entrolution
 package bengal.stm
 
-import bengal.stm.TxnRuntimeContext.IdClosureTallies
 import bengal.stm.TxnStateEntityContext.{TxnId, TxnVarId}
 
 import cats.effect.Ref
@@ -107,10 +106,8 @@ object STM {
       idGenTxn            <- Ref.of[F, Long](0)
       runningSemaphore    <- Semaphore[F](1)
       waitingSemaphore    <- Semaphore[F](1)
-      closureSemaphore    <- Semaphore[F](1)
       schedulerTrigger    <- Deferred[F, Unit]
       schedulerTriggerRef <- Ref.of(schedulerTrigger)
-      closureTalliesRef   <- Ref.of[F, IdClosureTallies](IdClosureTallies.empty)
       stm <- implicitly[Concurrent[F]].pure {
                new STM[F] {
                  override protected implicit val ConcurrentF: Concurrent[F] =
@@ -124,9 +121,7 @@ object STM {
                      TxnScheduler(
                        runningSemaphore,
                        waitingSemaphore,
-                       closureSemaphore,
                        schedulerTriggerRef,
-                       closureTalliesRef,
                        retryMaxWait,
                        maxWaitingToProcessInLoop
                      )
