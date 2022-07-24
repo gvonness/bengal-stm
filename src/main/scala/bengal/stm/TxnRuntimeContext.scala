@@ -142,7 +142,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         cycles: Int = 0
     )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
       if (
-        (currentClosure != finalClosure && cycles <= maxWaitingToProcessInLoop) || cycles == 0
+        waitingBuffer.nonEmpty &&
+        (currentClosure != finalClosure && cycles <= maxWaitingToProcessInLoop || cycles == 0)
       ) {
         val newWaiting: F[(IdClosure, List[AnalysedTxn[_]])] = for {
           aTxn <- F.pure(waitingBuffer.head)
