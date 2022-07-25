@@ -1,4 +1,4 @@
-ThisBuild / baseVersion := "0.3.7"
+ThisBuild / baseVersion := "0.3.9"
 ThisBuild / organization := "ai.entrolution"
 ThisBuild / organizationName := "Greg von Nessi"
 ThisBuild / publishGithubUser := "gvonness"
@@ -27,8 +27,8 @@ ThisBuild / crossScalaVersions := Seq("2.13.8")
 Global / excludeLintKeys += idePackagePrefix
 
 libraryDependencies += "org.typelevel" %% "cats-free"   % "2.7.0"
-libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.4"
-libraryDependencies += "org.scalatest" %% "scalatest"   % "3.2.11" % "test"
+libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.12"
+libraryDependencies += "org.scalatest" %% "scalatest"   % "3.2.12" % "test"
 
 idePackagePrefix := Some("ai.entrolution")
 
