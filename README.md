@@ -130,5 +130,10 @@ I wanted `waitFor` to have a clear semantic delineation from an `if` statement i
 
 In addition to this, Bengal short-circuits the rest of the monadic evaluation when encountering a failed `waitFor` predicate. This performance optimisation is not possible if we need to search the computation spec for a `waitFor` bypass.
 
+### Why don't the API methods appear in my IDE's auto-complete?
+This is a known issue with using implicit classes to extend class methods. 
+
+The choice to use implicit classes to present the public interfaces was a tactical one in that could be applied consistently to both transactions and transactional variables consistently while affording a clean separation of public and internal interfaces within the library.
+
 ### Why 'Bengal'?
 Bengals are a very playful and active cat breed. I figured the name worked for something built on Cats ;).
