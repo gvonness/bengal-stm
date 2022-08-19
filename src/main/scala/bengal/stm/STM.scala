@@ -21,22 +21,16 @@ import bengal.stm.TxnStateEntityContext.{TxnId, TxnVarId}
 
 import cats.effect.Ref
 import cats.effect.implicits._
-import cats.effect.kernel.{Concurrent, Deferred, Temporal}
+import cats.effect.kernel.{Async, Deferred}
 import cats.effect.std.Semaphore
 import cats.implicits._
 
-import scala.annotation.nowarn
 import scala.concurrent.duration.{FiniteDuration, NANOSECONDS}
 
 trait STM[F[_]]
-    extends TxnApiContext[F]
-    with TxnAdtContext[F]
-    with TxnCompilerContext[F]
-    with TxnStateEntityContext[F]
-    with TxnLogContext[F]
-    with TxnRuntimeContext[F] {
-
-  protected val ConcurrentF: Concurrent[F]
+    extends TxnRuntimeContext[F]
+    with TxnApiContext[F]
+    with TxnAdtContext[F] {
 
   def allocateTxnVar[V](value: V): F[TxnVar[V]]
   def allocateTxnVarMap[K, V](valueMap: Map[K, V]): F[TxnVarMap[K, V]]
@@ -66,7 +60,7 @@ trait STM[F[_]]
       modifyTxnVarMap(f, txnVarMap)
 
     def get(key: => K): Txn[Option[V]] =
-      getTxnVarMapValue(key, txnVarMap)(ConcurrentF)
+      getTxnVarMapValue(key, txnVarMap)
 
     def set(key: => K, newValue: => V): Txn[Unit] =
       setTxnVarMapValue(key, newValue, txnVarMap)
@@ -90,14 +84,12 @@ trait STM[F[_]]
 
 object STM {
 
-  @nowarn
-  def runtime[F[_]: Concurrent: Temporal]: F[STM[F]] =
+  def runtime[F[_]: Async]: F[STM[F]] =
     runtime(FiniteDuration(Long.MaxValue, NANOSECONDS),
             Runtime.getRuntime.availableProcessors() * 2
     )
 
-  @nowarn
-  def runtime[F[_]: Concurrent: Temporal](
+  def runtime[F[_]: Async](
       retryMaxWait: FiniteDuration,
       maxWaitingToProcessInLoop: Int
   ): F[STM[F]] =
@@ -108,11 +100,8 @@ object STM {
       waitingSemaphore    <- Semaphore[F](1)
       schedulerTrigger    <- Deferred[F, Unit]
       schedulerTriggerRef <- Ref.of(schedulerTrigger)
-      stm <- implicitly[Concurrent[F]].pure {
+      stm <- Async[F].delay {
                new STM[F] {
-                 override protected implicit val ConcurrentF: Concurrent[F] =
-                   implicitly[Concurrent[F]]
-
                  override val txnVarIdGen: Ref[F, TxnVarId] = idGenVar
                  override val txnIdGen: Ref[F, TxnId]       = idGenTxn
 

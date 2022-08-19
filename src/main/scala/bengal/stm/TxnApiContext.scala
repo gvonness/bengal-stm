@@ -17,10 +17,8 @@
 package ai.entrolution
 package bengal.stm
 
-import cats.effect.kernel.Concurrent
 import cats.free.Free
 
-import scala.annotation.nowarn
 import scala.util.{Failure, Success, Try}
 
 private[stm] trait TxnApiContext[F[_]] {
@@ -91,11 +89,10 @@ private[stm] trait TxnApiContext[F[_]] {
       _     <- setTxnVarMap(f(value), txnVarMap)
     } yield ()
 
-  @nowarn
   private[stm] def getTxnVarMapValue[K, V](
       key: => K,
       txnVarMap: TxnVarMap[K, V]
-  )(implicit F: Concurrent[F]): Txn[Option[V]] =
+  ): Txn[Option[V]] =
     liftSuccess(TxnGetVarMapValue(() => key, txnVarMap))
 
   private[stm] def setTxnVarMapValue[K, V](

@@ -22,26 +22,25 @@ import bengal.stm.TxnStateEntityContext.TxnVarRuntimeId
 
 import cats.effect.Deferred
 import cats.effect.implicits._
-import cats.effect.kernel.{Concurrent, Resource}
+import cats.effect.kernel.{Async, Resource}
 import cats.effect.std.Semaphore
-import cats.implicits._
+import cats.syntax.all._
 
 import scala.annotation.nowarn
 import scala.util.{Failure, Success, Try}
 
-private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
+private[stm] abstract class TxnLogContext[F[_]: Async]
+    extends TxnStateEntityContext[F] {
 
   private[stm] sealed trait TxnLogEntry[V] {
     private[stm] def get: V
     private[stm] def set(value: V): TxnLogEntry[V]
-    private[stm] def commit(implicit F: Concurrent[F]): F[Unit]
-    private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean]
-    private[stm] def lock(implicit F: Concurrent[F]): F[Option[Semaphore[F]]]
-    private[stm] def idClosure(implicit F: Concurrent[F]): F[IdClosure]
+    private[stm] def commit: F[Unit]
+    private[stm] def isDirty: F[Boolean]
+    private[stm] def lock: F[Option[Semaphore[F]]]
+    private[stm] def idClosure: F[IdClosure]
 
-    private[stm] def getRegisterRetry(implicit
-        F: Concurrent[F]
-    ): F[Deferred[F, Unit] => F[Unit]]
+    private[stm] def getRegisterRetry: F[Deferred[F, Unit] => F[Unit]]
   }
 
   // RO entry is not necessary for pure transactions.
@@ -67,26 +66,21 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         this
       }
 
-    override private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
-      F.unit
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
 
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      F.pure(false)
+    override private[stm] lazy val isDirty: F[Boolean] =
+      Async[F].pure(false)
 
-    override private[stm] def lock(implicit
-        F: Concurrent[F]
-    ): F[Option[Semaphore[F]]] =
-      F.pure(None)
+    override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
+      Async[F].pure(None)
 
-    override private[stm] def getRegisterRetry(implicit
-        F: Concurrent[F]
-    ): F[Deferred[F, Unit] => F[Unit]] =
-      F.pure(txnVar.registerRetry)
+    override private[stm] lazy val getRegisterRetry
+        : F[Deferred[F, Unit] => F[Unit]] =
+      Async[F].delay(txnVar.registerRetry)
 
-    override private[stm] def idClosure(implicit
-        F: Concurrent[F]
-    ): F[IdClosure] =
-      F.pure {
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].delay {
         IdClosure(readIds = Set(txnVar.runtimeId), updatedIds = Set())
       }
   }
@@ -114,26 +108,21 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         )
       }
 
-    override private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
+    override private[stm] lazy val commit: F[Unit] =
       txnVar.set(current)
 
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
+    override private[stm] lazy val isDirty: F[Boolean] =
       txnVar.get.map(_ != initial)
 
-    override private[stm] def lock(implicit
-        F: Concurrent[F]
-    ): F[Option[Semaphore[F]]] =
-      F.pure(Some(txnVar.commitLock))
+    override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
+      Async[F].delay(Some(txnVar.commitLock))
 
-    override private[stm] def getRegisterRetry(implicit
-        F: Concurrent[F]
-    ): F[Deferred[F, Unit] => F[Unit]] =
-      F.pure(txnVar.registerRetry)
+    override private[stm] lazy val getRegisterRetry
+        : F[Deferred[F, Unit] => F[Unit]] =
+      Async[F].delay(txnVar.registerRetry)
 
-    override private[stm] def idClosure(implicit
-        F: Concurrent[F]
-    ): F[IdClosure] =
-      F.pure {
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].delay {
         IdClosure(
           readIds = Set(txnVar.runtimeId),
           updatedIds = Set(txnVar.runtimeId)
@@ -161,26 +150,21 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         this
       }
 
-    override private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
-      F.unit
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
 
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      F.pure(false)
+    override private[stm] lazy val isDirty: F[Boolean] =
+      Async[F].pure(false)
 
-    override private[stm] def lock(implicit
-        F: Concurrent[F]
-    ): F[Option[Semaphore[F]]] =
-      F.pure(None)
+    override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
+      Async[F].pure(None)
 
-    override private[stm] def getRegisterRetry(implicit
-        F: Concurrent[F]
-    ): F[Deferred[F, Unit] => F[Unit]] =
-      F.pure(txnVarMap.registerRetry)
+    override private[stm] lazy val getRegisterRetry
+        : F[Deferred[F, Unit] => F[Unit]] =
+      Async[F].delay(txnVarMap.registerRetry)
 
-    override private[stm] def idClosure(implicit
-        F: Concurrent[F]
-    ): F[IdClosure] =
-      F.pure {
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].delay {
         IdClosure(
           readIds = Set(txnVarMap.runtimeId),
           updatedIds = Set()
@@ -194,7 +178,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       txnVarMap: TxnVarMap[K, V]
   ) extends TxnLogEntry[Map[K, V]] {
 
-    override private[stm] def get: Map[K, V] =
+    override private[stm] lazy val get: Map[K, V] =
       current
 
     override private[stm] def set(value: Map[K, V]): TxnLogEntry[Map[K, V]] =
@@ -211,26 +195,21 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         )
       }
 
-    override private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
-      F.unit
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
 
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
+    override private[stm] lazy val isDirty: F[Boolean] =
       txnVarMap.get.map(_ != initial)
 
-    override private[stm] def lock(implicit
-        F: Concurrent[F]
-    ): F[Option[Semaphore[F]]] =
-      F.pure(Some(txnVarMap.commitLock))
+    override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
+      Async[F].delay(Some(txnVarMap.commitLock))
 
-    override private[stm] def getRegisterRetry(implicit
-        F: Concurrent[F]
-    ): F[Deferred[F, Unit] => F[Unit]] =
-      F.pure(txnVarMap.registerRetry)
+    override private[stm] lazy val getRegisterRetry
+        : F[Deferred[F, Unit] => F[Unit]] =
+      Async[F].delay(txnVarMap.registerRetry)
 
-    override private[stm] def idClosure(implicit
-        F: Concurrent[F]
-    ): F[IdClosure] =
-      F.pure {
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].delay {
         IdClosure(
           readIds = Set(txnVarMap.runtimeId),
           updatedIds = Set(txnVarMap.runtimeId)
@@ -245,7 +224,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       txnVarMap: TxnVarMap[K, V]
   ) extends TxnLogEntry[Option[V]] {
 
-    override private[stm] def get: Option[V] =
+    override private[stm] lazy val get: Option[V] =
       initial
 
     override private[stm] def set(value: Option[V]): TxnLogEntry[Option[V]] =
@@ -260,33 +239,28 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         this
       }
 
-    override private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
-      F.unit
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
 
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      F.pure(false)
+    override private[stm] lazy val isDirty: F[Boolean] =
+      Async[F].pure(false)
 
-    override private[stm] def lock(implicit
-        F: Concurrent[F]
-    ): F[Option[Semaphore[F]]] =
-      F.pure(None)
+    override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
+      Async[F].pure(None)
 
-    override private[stm] def getRegisterRetry(implicit
-        F: Concurrent[F]
-    ): F[Deferred[F, Unit] => F[Unit]] =
+    override private[stm] lazy val getRegisterRetry
+        : F[Deferred[F, Unit] => F[Unit]] =
       for {
         oTxnVar <- txnVarMap.getTxnVar(key)
         result <- oTxnVar match {
                     case Some(txnVar) =>
-                      F.pure(i => txnVar.registerRetry(i))
+                      Async[F].delay(i => txnVar.registerRetry(i))
                     case None =>
-                      F.pure(i => txnVarMap.registerRetry(i))
+                      Async[F].delay(i => txnVarMap.registerRetry(i))
                   }
       } yield result
 
-    override private[stm] def idClosure(implicit
-        F: Concurrent[F]
-    ): F[IdClosure] =
+    override private[stm] lazy val idClosure: F[IdClosure] =
       txnVarMap.getRuntimeId(key).map { rids =>
         IdClosure(
           readIds = rids.toSet,
@@ -302,7 +276,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       txnVarMap: TxnVarMap[K, V]
   ) extends TxnLogEntry[Option[V]] {
 
-    override private[stm] def get: Option[V] =
+    override private[stm] lazy val get: Option[V] =
       current
 
     override private[stm] def set(value: Option[V]): TxnLogEntry[Option[V]] =
@@ -321,51 +295,46 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         )
       }
 
-    override private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
+    override private[stm] lazy val commit: F[Unit] =
       (initial, current) match {
         case (_, Some(cValue)) =>
           txnVarMap.addOrUpdate(key, cValue)
         case (Some(_), None) =>
           txnVarMap.delete(key)
         case _ =>
-          F.unit
+          Async[F].unit
       }
 
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
+    override private[stm] lazy val isDirty: F[Boolean] =
       txnVarMap.get(key).map { oValue =>
         initial
           .map(iValue => !oValue.contains(iValue))
           .getOrElse(oValue.isDefined)
       }
 
-    override private[stm] def lock(implicit
-        F: Concurrent[F]
-    ): F[Option[Semaphore[F]]] =
+    override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       for {
         oTxnVar <- txnVarMap.getTxnVar(key)
       } yield oTxnVar.map(_.commitLock)
 
-    override private[stm] def getRegisterRetry(implicit
-        F: Concurrent[F]
-    ): F[Deferred[F, Unit] => F[Unit]] =
+    override private[stm] lazy val getRegisterRetry
+        : F[Deferred[F, Unit] => F[Unit]] =
       for {
         oTxnVar <- txnVarMap.getTxnVar(key)
         result <- oTxnVar match {
                     case Some(txnVar) =>
-                      F.pure { i: Deferred[F, Unit] =>
+                      Async[F].delay { i: Deferred[F, Unit] =>
                         for {
                           _ <- txnVar.registerRetry(i)
                           _ <- txnVarMap.registerRetry(i)
                         } yield ()
                       }
                     case None =>
-                      F.pure(i => txnVarMap.registerRetry(i))
+                      Async[F].delay(i => txnVarMap.registerRetry(i))
                   }
       } yield result
 
-    override private[stm] def idClosure(implicit
-        F: Concurrent[F]
-    ): F[IdClosure] =
+    override private[stm] lazy val idClosure: F[IdClosure] =
       txnVarMap.getRuntimeId(key).map { rids =>
         val ridSet = rids.toSet
         if (
@@ -386,102 +355,77 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
   private[stm] sealed trait TxnLog { self =>
 
-    private[stm] def getVar[V](txnVar: TxnVar[V])(implicit
-        F: Concurrent[F]
-    ): F[(TxnLog, V)]
+    private[stm] def getVar[V](txnVar: TxnVar[V]): F[(TxnLog, V)]
 
     @nowarn
-    private[stm] def pure[V](value: () => V)(implicit
-        F: Concurrent[F]
-    ): F[(TxnLog, V)] =
-      F.pure((self, ().asInstanceOf[V]))
+    private[stm] def pure[V](value: () => V): F[(TxnLog, V)] =
+      Async[F].delay(self, ().asInstanceOf[V])
 
     @nowarn
-    private[stm] def setVar[V](newValue: () => V, txnVar: TxnVar[V])(implicit
-        F: Concurrent[F]
+    private[stm] def setVar[V](
+        newValue: () => V,
+        txnVar: TxnVar[V]
     ): F[TxnLog] =
-      F.pure(self)
+      Async[F].pure(self)
 
     @nowarn
     private[stm] def getVarMapValue[K, V](
         key: () => K,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[(TxnLog, Option[V])] =
-      F.pure((self, None))
+      Async[F].pure((self, None))
 
     @nowarn
     private[stm] def getVarMap[K, V](
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[(TxnLog, Map[K, V])] =
-      F.pure(self, Map())
+      Async[F].pure(self, Map())
 
     @nowarn
     private[stm] def setVarMap[K, V](
         newMap: () => Map[K, V],
         txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[TxnLog] =
-      F.pure(self)
+    ): F[TxnLog] =
+      Async[F].pure(self)
 
     @nowarn
     private[stm] def setVarMapValue[K, V](
         key: () => K,
         newValue: () => V,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[TxnLog] =
-      F.pure(self)
+      Async[F].pure(self)
 
     @nowarn
     private[stm] def modifyVarMapValue[K, V](
         key: () => K,
         f: V => V,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[TxnLog] =
-      F.pure(self)
+      Async[F].pure(self)
 
     @nowarn
     private[stm] def deleteVarMapValue[K, V](
         key: () => K,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[TxnLog] =
-      F.pure(self)
+      Async[F].pure(self)
 
     @nowarn
-    private[stm] def raiseError(ex: Throwable)(implicit
-        F: Concurrent[F]
-    ): F[TxnLog] =
-      F.pure(self)
+    private[stm] def raiseError(ex: Throwable): F[TxnLog] =
+      Async[F].pure(self)
 
-    private[stm] def scheduleRetry(implicit F: Concurrent[F]): F[TxnLog] =
-      F.pure(self)
+    private[stm] def scheduleRetry: F[TxnLog]
 
-    private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      F.pure(false)
+    private[stm] def isDirty: F[Boolean]
 
-    private[stm] def getRetrySignal(implicit
-        F: Concurrent[F]
-    ): F[Option[Deferred[F, Unit]]] =
-      F.pure(None)
+    private[stm] def getRetrySignal: F[Option[Deferred[F, Unit]]]
 
-    private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
-      F.unit
+    private[stm] def commit: F[Unit]
 
-    private[stm] def idClosure(implicit F: Concurrent[F]): F[IdClosure] =
-      F.pure(IdClosure.empty)
+    private[stm] def idClosure: F[IdClosure]
 
-    @nowarn
-    private[stm] def withLock[A](
-        fa: F[A]
-    )(implicit F: Concurrent[F]): F[A] =
+    private[stm] def withLock[A](fa: F[A]): F[A] =
       fa
   }
 
@@ -492,8 +436,8 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     override private[stm] def pure[V](
         value: () => V
-    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
-      F.pure {
+    ): F[(TxnLog, V)] =
+      Async[F].delay {
         Try(value()) match {
           case Success(v) =>
             (this, v)
@@ -504,10 +448,10 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     override private[stm] def getVar[V](
         txnVar: TxnVar[V]
-    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
+    ): F[(TxnLog, V)] =
       log.get(txnVar.runtimeId) match {
         case Some(entry) =>
-          F.pure((this, entry.get.asInstanceOf[V]))
+          Async[F].delay((this, entry.get.asInstanceOf[V]))
         case None =>
           for {
             v <- txnVar.get
@@ -524,14 +468,12 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     override private[stm] def setVar[V](
         newValue: () => V,
         txnVar: TxnVar[V]
-    )(implicit
-        F: Concurrent[F]
     ): F[TxnLog] =
       Try(newValue()) match {
         case Success(materializedValue) =>
           (log.get(txnVar.runtimeId) match {
             case Some(entry) =>
-              F.pure(
+              Async[F].delay(
                 this.copy(
                   log + (txnVar.runtimeId -> entry
                     .asInstanceOf[TxnLogEntry[V]]
@@ -556,8 +498,6 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     private def getVarMapValueEntry[K, V](
         key: K,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[Option[(TxnVarRuntimeId, TxnLogEntry[Option[V]])]] =
       for {
         oTxnVar <- txnVarMap.getTxnVar(key)
@@ -565,7 +505,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                     case Some(txnVar) =>
                       log.get(txnVar.runtimeId) match {
                         case Some(res) =>
-                          F.pure(
+                          Async[F].delay(
                             Some(
                               (txnVar.runtimeId,
                                res.asInstanceOf[TxnLogEntry[Option[V]]]
@@ -604,7 +544,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     override private[stm] def getVarMap[K, V](
         txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[(TxnLog, Map[K, V])] = {
+    ): F[(TxnLog, Map[K, V])] = {
       lazy val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] =
         for {
           preTxnEntries <- if (!log.contains(txnVarMap.runtimeId)) {
@@ -616,7 +556,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                                  }
                              } yield preTxn
                            } else {
-                             F.pure(List())
+                             Async[F].pure(List())
                            }
           currentEntries <- extractMap(txnVarMap, log)
           reads <- currentEntries.keySet.toList.parTraverse { ks =>
@@ -648,8 +588,6 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     override private[stm] def getVarMapValue[K, V](
         key: () => K,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[(TxnLog, Option[V])] =
       Try(key()) match {
         case Success(materializedKey) =>
@@ -659,7 +597,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                         case Some(txnVar) =>
                           log.get(txnVar.runtimeId) match {
                             case Some(entry) =>
-                              F.pure(
+                              Async[F].delay(
                                 (this, entry.get.asInstanceOf[Option[V]])
                               ) //Noop
                             case None =>
@@ -702,8 +640,6 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         key: K,
         newValue: V,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[Option[(TxnVarRuntimeId, TxnLogEntry[Option[V]])]] =
       txnVarMap
         .getTxnVar(key)
@@ -711,7 +647,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
           case Some(txnVar) =>
             log.get(txnVar.runtimeId) match {
               case Some(entry) =>
-                F.pure(
+                Async[F].delay(
                   Some(
                     (txnVar.runtimeId,
                      entry
@@ -766,8 +702,6 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     private def deleteVarMapValueEntry[K, V](
         key: K,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[Option[(TxnVarRuntimeId, TxnLogEntry[Option[V]])]] =
       for {
         oTxnVar <- txnVarMap.getTxnVar(key)
@@ -775,7 +709,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                     case Some(txnVar) =>
                       log.get(txnVar.runtimeId) match {
                         case Some(entry) =>
-                          F.pure(
+                          Async[F].delay(
                             Some(
                               (txnVar.runtimeId,
                                entry
@@ -820,7 +754,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     override private[stm] def setVarMap[K, V](
         newMap: () => Map[K, V],
         txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[TxnLog] =
+    ): F[TxnLog] =
       Try(newMap()) match {
         case Success(materializedNewMap) =>
           val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] = for {
@@ -864,7 +798,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         key: () => K,
         newValue: () => V,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[TxnLog] =
+    ): F[TxnLog] =
       Try((key(), newValue())) match {
         case Success((materializedKey, materializedNewValue)) =>
           txnVarMap
@@ -873,7 +807,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
               case Some(txnVar) =>
                 log.get(txnVar.runtimeId) match {
                   case Some(entry) =>
-                    F.pure(
+                    Async[F].delay(
                       this.copy(
                         log + (txnVar.runtimeId -> entry
                           .asInstanceOf[TxnLogEntry[Option[V]]]
@@ -927,7 +861,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
         key: () => K,
         f: V => V,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit F: Concurrent[F]): F[TxnLog] =
+    ): F[TxnLog] =
       Try(key()) match {
         case Success(materializedKey) =>
           txnVarMap
@@ -936,7 +870,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
               case Some(txnVar) =>
                 (log.get(txnVar.runtimeId) match {
                   case Some(entry) =>
-                    F.pure {
+                    Async[F].delay {
                       entry.get.asInstanceOf[Option[V]] match {
                         case Some(v) =>
                           this.copy(
@@ -1003,8 +937,6 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     override private[stm] def deleteVarMapValue[K, V](
         key: () => K,
         txnVarMap: TxnVarMap[K, V]
-    )(implicit
-        F: Concurrent[F]
     ): F[TxnLog] =
       Try(key()) match {
         case Success(materializedKey) =>
@@ -1014,7 +946,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
                         case Some(txnVar) =>
                           log.get(txnVar.runtimeId) match {
                             case Some(entry) =>
-                              F.pure(
+                              Async[F].delay(
                                 this.copy(
                                   log + (txnVar.runtimeId -> entry
                                     .asInstanceOf[TxnLogEntry[Option[V]]]
@@ -1060,10 +992,8 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
           raiseError(exception)
       }
 
-    override private[stm] def raiseError(ex: Throwable)(implicit
-        F: Concurrent[F]
-    ): F[TxnLog] =
-      F.pure(TxnLogError(ex))
+    override private[stm] def raiseError(ex: Throwable): F[TxnLog] =
+      Async[F].delay(TxnLogError(ex))
 
     // We throw here to short-circuit the Free compiler recursion.
     // There is no point in processing anything else beyond the retry,
@@ -1072,9 +1002,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     // Note that we do not throw on `raiseError` as the Txn may contain
     // a handleError entry; i.e. we can not simply short-circuit the
     // recursion.
-    override private[stm] def scheduleRetry(implicit
-        F: Concurrent[F]
-    ): F[TxnLog] =
+    override private[stm] def scheduleRetry: F[TxnLog] =
       throw TxnRetryException(this)
 
     // Favor computational efficiency over parallelism here by
@@ -1082,37 +1010,38 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     // using existence in a parallel traversal. I.e. we have
     // enough parallelism in the runtime to ensure good hardware
     // utilisation
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
-      log.values.toList.foldLeft(F.pure(false)) { (i, j) =>
+    override private[stm] lazy val isDirty: F[Boolean] =
+      log.values.toList.foldLeft(Async[F].pure(false)) { (i, j) =>
         for {
           prev <- i
           result <- if (prev) {
-                      F.pure(prev)
+                      Async[F].pure(prev)
                     } else {
                       j.isDirty
                     }
         } yield result
       }
 
-    override private[stm] def idClosure(implicit
-        F: Concurrent[F]
-    ): F[IdClosure] =
+    override private[stm] lazy val idClosure: F[IdClosure] =
       log.values.toList.parTraverse { entry =>
         entry.idClosure
       }.map(_.reduce(_ mergeWith _))
 
-    override private[stm] def withLock[A](
-        fa: F[A]
-    )(implicit F: Concurrent[F]): F[A] =
+    override private[stm] def withLock[A](fa: F[A]): F[A] =
       for {
         locks <- log.values.toList.parTraverse(_.lock)
-        result <- locks.toSet.flatten
-                    .foldLeft(Resource.eval(F.unit))((i, j) => i >> j.permit)
-                    .use(_ => fa)
+        result <-
+          locks.toSet.flatten
+            .foldLeft(Resource.eval(Async[F].unit))((i, j) => i >> j.permit)
+            .use(_ => fa)
       } yield result
 
-    override private[stm] def commit(implicit F: Concurrent[F]): F[Unit] =
+    override private[stm] lazy val commit: F[Unit] =
       log.values.toList.parTraverse(_.commit).void
+
+    override private[stm] lazy val getRetrySignal
+        : F[Option[Deferred[F, Unit]]] =
+      Async[F].pure(None)
   }
 
   private[stm] object TxnLogValid {
@@ -1121,7 +1050,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
     private def extractMap[K, V](
         txnVarMap: TxnVarMap[K, V],
         log: Map[TxnVarRuntimeId, TxnLogEntry[_]]
-    )(implicit F: Concurrent[F]): F[Map[K, V]] = {
+    ): F[Map[K, V]] = {
       val logEntries = log.values.flatMap {
         case TxnLogReadOnlyVarMapEntry(key, Some(initial), entryMap)
             if txnVarMap.id == entryMap.id =>
@@ -1134,7 +1063,7 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
       }.toMap.asInstanceOf[Map[K, V]]
 
       if (log.contains(txnVarMap.runtimeId)) {
-        F.pure(logEntries)
+        Async[F].pure(logEntries)
       } else {
         txnVarMap.get.map(_ ++ logEntries)
       }
@@ -1145,36 +1074,60 @@ private[stm] trait TxnLogContext[F[_]] { this: TxnStateEntityContext[F] =>
 
     override private[stm] def getVar[V](
         txnVar: TxnVar[V]
-    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
+    ): F[(TxnLog, V)] =
       validLog.log.get(txnVar.runtimeId) match {
         case Some(entry) =>
-          F.pure((this, entry.get.asInstanceOf[V]))
+          Async[F].delay((this, entry.get.asInstanceOf[V]))
         case None =>
           for {
             v <- txnVar.get
           } yield (this, v)
       }
 
-    override private[stm] def isDirty(implicit F: Concurrent[F]): F[Boolean] =
+    override private[stm] lazy val isDirty: F[Boolean] =
       validLog.isDirty
 
-    override private[stm] def getRetrySignal(implicit
-        F: Concurrent[F]
-    ): F[Option[Deferred[F, Unit]]] =
+    override private[stm] lazy val getRetrySignal
+        : F[Option[Deferred[F, Unit]]] =
       for {
         retrySignal <- Deferred[F, Unit]
         registerRetries <-
           validLog.log.values.toList.parTraverse(_.getRegisterRetry)
         _ <- registerRetries.parTraverse(rr => rr(retrySignal))
       } yield Some(retrySignal)
+
+    override private[stm] lazy val scheduleRetry =
+      Async[F].pure(this)
+
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
+
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].pure(IdClosure.empty)
   }
 
   private[stm] case class TxnLogError(ex: Throwable) extends TxnLog {
 
     override private[stm] def getVar[V](
         txnVar: TxnVar[V]
-    )(implicit F: Concurrent[F]): F[(TxnLog, V)] =
+    ): F[(TxnLog, V)] =
       txnVar.get.map(v => (this, v))
+
+    override private[stm] lazy val scheduleRetry =
+      Async[F].pure(this)
+
+    override private[stm] lazy val isDirty =
+      Async[F].pure(false)
+
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
+
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].pure(IdClosure.empty)
+
+    override private[stm] lazy val getRetrySignal
+        : F[Option[Deferred[F, Unit]]] =
+      Async[F].pure(None)
   }
 
   private[stm] case class TxnRetryException(validLog: TxnLogValid)
