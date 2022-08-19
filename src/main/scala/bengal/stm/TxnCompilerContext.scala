@@ -21,27 +21,26 @@ import bengal.stm.TxnRuntimeContext.IdClosure
 
 import cats.arrow.FunctionK
 import cats.data.StateT
-import cats.effect.kernel.Concurrent
-import cats.implicits._
+import cats.effect.kernel.Async
+import cats.syntax.all._
 
 import scala.util.{Failure, Success, Try}
 
-private[stm] trait TxnCompilerContext[F[_]] {
-  this: TxnAdtContext[F] with TxnStateEntityContext[F] with TxnLogContext[F] =>
+private[stm] abstract class TxnCompilerContext[F[_]: Async]
+    extends TxnLogContext[F] {
+  this: TxnAdtContext[F] =>
 
   private[stm] type IdClosureStore[T] = StateT[F, IdClosure, T]
   private[stm] type TxnLogStore[T]    = StateT[F, TxnLog, T]
 
-  private def noOp[S](implicit F: Concurrent[F]): StateT[F, S, Unit] =
-    StateT[F, S, Unit](s => F.pure((s, ())))
+  private def noOp[S]: StateT[F, S, Unit] =
+    StateT[F, S, Unit](s => Async[F].delay((s, ())))
 
   private[stm] case class StaticAnalysisShortCircuitException(
       idClosure: IdClosure
   ) extends RuntimeException
 
-  private[stm] def staticAnalysisCompiler(implicit
-      F: Concurrent[F]
-  ): FunctionK[TxnOrErr, IdClosureStore] =
+  private[stm] def staticAnalysisCompiler: FunctionK[TxnOrErr, IdClosureStore] =
     new (FunctionK[TxnOrErr, IdClosureStore]) {
 
       def apply[V](fa: TxnOrErr[V]): IdClosureStore[V] =
@@ -52,7 +51,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 noOp[IdClosure].map(_.asInstanceOf[V])
               case TxnPure(value) =>
                 StateT[F, IdClosure, V] { s =>
-                  F.pure {
+                  Async[F].delay {
                     Try(value()) match {
                       case Success(materializedValue) =>
                         (s, materializedValue)
@@ -84,7 +83,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         value <-
                           oTxnVar
                             .map(_.get.map(Some(_)))
-                            .getOrElse(F.pure(None))
+                            .getOrElse(Async[F].pure(None))
                         oARId <-
                           adt.txnVarMap.getRuntimeActualisedId(
                             materializedKey
@@ -106,13 +105,13 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 }
               case adt: TxnSetVar[_] =>
                 StateT[F, IdClosure, V] { s =>
-                  F.pure(
+                  Async[F].delay(
                     (s.addWriteId(adt.txnVar.runtimeId), ().asInstanceOf[V])
                   )
                 }
               case adt: TxnSetVarMap[_, _] =>
                 StateT[F, IdClosure, V] { s =>
-                  F.pure(
+                  Async[F].delay(
                     (s.addWriteId(adt.txnVarMap.runtimeId), ().asInstanceOf[V])
                   )
                 }
@@ -133,7 +132,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
                         .getOrElse((s.addWriteId(eRId), ()))
                     case _ =>
-                      F.pure((s, ()))
+                      Async[F].delay((s, ()))
                   }
                 }.map(_.asInstanceOf[V])
               case adt: TxnModifyVarMapValue[_, _] =>
@@ -153,7 +152,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
                         .getOrElse((s.addWriteId(eRId), ()))
                     case _ =>
-                      F.pure((s, ()))
+                      Async[F].delay((s, ()))
                   }
                 }.map(_.asInstanceOf[V])
               case adt: TxnDeleteVarMapValue[_, _] =>
@@ -173,16 +172,18 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
                         .getOrElse((s.addWriteId(eRId), ()))
                     case _ =>
-                      F.pure((s, ()))
+                      Async[F].delay((s, ()))
                   }
                 }.map(_.asInstanceOf[V])
               case adt: TxnHandleError[_] =>
                 StateT[F, IdClosure, V] { s =>
                   Try(adt.fa().map(_.asInstanceOf[V])) match {
                     case Success(materializedF) =>
-                      materializedF.foldMap(staticAnalysisCompiler).run(s)
+                      materializedF
+                        .foldMap(staticAnalysisCompiler)
+                        .run(s)
                     case _ =>
-                      F.pure((s, ().asInstanceOf[V]))
+                      Async[F].delay((s, ().asInstanceOf[V]))
                   }
                 }
             }
@@ -191,9 +192,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
         }
     }
 
-  private[stm] def txnLogCompiler(implicit
-      F: Concurrent[F]
-  ): FunctionK[TxnOrErr, TxnLogStore] =
+  private[stm] lazy val txnLogCompiler: FunctionK[TxnOrErr, TxnLogStore] =
     new (FunctionK[TxnOrErr, TxnLogStore]) {
 
       def apply[V](fa: TxnOrErr[V]): TxnLogStore[V] =
@@ -264,7 +263,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                                              .foldMap(txnLogCompiler)
                                              .run(s)
                                          case _ =>
-                                           F.pure(originalResult)
+                                           Async[F].pure(originalResult)
                                        }
                       } yield finalResult
                     case Failure(exception) =>

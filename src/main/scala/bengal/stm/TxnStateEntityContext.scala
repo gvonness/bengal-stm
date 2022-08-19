@@ -19,17 +19,16 @@ package bengal.stm
 
 import bengal.stm.TxnStateEntityContext._
 
-import cats.effect.kernel.Concurrent
+import cats.effect.implicits._
+import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
 import cats.effect.{Deferred, Ref}
-import cats.implicits._
-import cats.effect.implicits._
+import cats.syntax.all._
 
 import java.util.UUID
-import scala.annotation.nowarn
 import scala.collection.mutable.{Map => MutableMap}
 
-private[stm] trait TxnStateEntityContext[F[_]] {
+private[stm] abstract class TxnStateEntityContext[F[_]: Async] {
 
   protected val txnVarIdGen: Ref[F, TxnVarId]
 
@@ -52,11 +51,10 @@ private[stm] trait TxnStateEntityContext[F[_]] {
     private[stm] def commitLock: Semaphore[F]
     private[stm] def txnRetrySignals: TxnSignals
 
-    @nowarn
-    private[stm] def registerRetry(signal: Deferred[F, Unit])(implicit
-        F: Concurrent[F]
+    private[stm] def registerRetry(
+        signal: Deferred[F, Unit]
     ): F[Unit] =
-      txnRetrySignals.update(_ + signal)
+      txnRetrySignals.update(signals => signals ++ Set(signal))
   }
 
   case class TxnVar[T](
@@ -66,18 +64,18 @@ private[stm] trait TxnStateEntityContext[F[_]] {
       txnRetrySignals: TxnSignals
   ) extends TxnStateEntity[T] {
 
-    private def completeRetrySignals(implicit F: Concurrent[F]): F[Unit] =
+    private def completeRetrySignals: F[Unit] =
       for {
         signals <- txnRetrySignals.getAndSet(Set())
         _       <- signals.toList.parTraverse(_.complete(()))
       } yield ()
 
-    private[stm] def get: F[T] =
+    private[stm] lazy val get: F[T] =
       value.get
 
     private[stm] def set(
         newValue: T
-    )(implicit F: Concurrent[F]): F[Unit] =
+    ): F[Unit] =
       for {
         _ <- value.set(newValue)
         _ <- completeRetrySignals
@@ -86,12 +84,12 @@ private[stm] trait TxnStateEntityContext[F[_]] {
 
   object TxnVar {
 
-    def of[T](value: T)(implicit F: Concurrent[F]): F[TxnVar[T]] =
+    def of[T](value: T): F[TxnVar[T]] =
       for {
         id       <- txnVarIdGen.updateAndGet(_ + 1)
-        valueRef <- F.ref(value)
+        valueRef <- Async[F].ref(value)
         lock     <- Semaphore[F](1)
-        signals  <- F.ref(Set[Deferred[F, Unit]]())
+        signals  <- Async[F].ref(Set[Deferred[F, Unit]]())
       } yield TxnVar(id, valueRef, lock, signals)
   }
 
@@ -104,12 +102,12 @@ private[stm] trait TxnStateEntityContext[F[_]] {
       txnRetrySignals: TxnSignals
   ) extends TxnStateEntity[VarIndex[K, V]] {
 
-    private def withLock[A](semaphore: Semaphore[F])(fa: F[A])(implicit
-        F: Concurrent[F]
+    private def withLock[A](semaphore: Semaphore[F])(
+        fa: F[A]
     ): F[A] =
       semaphore.permit.use(_ => fa)
 
-    private[stm] def get(implicit F: Concurrent[F]): F[Map[K, V]] =
+    private[stm] lazy val get: F[Map[K, V]] =
       for {
         txnVarMap <- value.get
         valueMap <- txnVarMap.toList.parTraverse { kv =>
@@ -117,39 +115,35 @@ private[stm] trait TxnStateEntityContext[F[_]] {
                     }
       } yield valueMap.toMap
 
-    private[stm] def getTxnVar(
-        key: K
-    )(implicit F: Concurrent[F]): F[Option[TxnVar[V]]] =
+    private[stm] def getTxnVar(key: K): F[Option[TxnVar[V]]] =
       for {
         txnVarMap <- value.get
       } yield txnVarMap.get(key)
 
-    private[stm] def get(key: K)(implicit F: Concurrent[F]): F[Option[V]] =
+    private[stm] def get(key: K): F[Option[V]] =
       for {
         oTxnVar <- getTxnVar(key)
         result <- oTxnVar match {
                     case Some(txnVar) =>
                       txnVar.get.map(v => Some(v))
                     case _ =>
-                      F.pure(None)
+                      Async[F].pure(None)
                   }
       } yield result
 
-    private[stm] def getId(key: K)(implicit
-        F: Concurrent[F]
-    ): F[Option[TxnVarId]] =
+    private[stm] def getId(key: K): F[Option[TxnVarId]] =
       getTxnVar(key).map(_.map(_.id))
 
     private[stm] def getRuntimeExistentialId(key: K): TxnVarRuntimeId =
       UUID.nameUUIDFromBytes((id, key).toString.getBytes).hashCode()
 
-    private[stm] def getRuntimeActualisedId(key: K)(implicit
-        F: Concurrent[F]
+    private[stm] def getRuntimeActualisedId(
+        key: K
     ): F[Option[TxnVarRuntimeId]] =
       getTxnVar(key).map(_.map(_.runtimeId))
 
-    private[stm] def getRuntimeId(key: K)(implicit
-        F: Concurrent[F]
+    private[stm] def getRuntimeId(
+        key: K
     ): F[List[TxnVarRuntimeId]] =
       getRuntimeActualisedId(key).map(
         List(_, Some(getRuntimeExistentialId(key))).flatten
@@ -159,15 +153,13 @@ private[stm] trait TxnStateEntityContext[F[_]] {
     // in the map
     private[stm] def getIdsForKeys(
         keySet: Set[K]
-    )(implicit F: Concurrent[F]): F[Set[TxnVarId]] =
+    ): F[Set[TxnVarId]] =
       for {
         ids <- keySet.toList.parTraverse(getId)
       } yield ids.flatten.toSet
 
     // Only called when key is known to not exist
-    private def add(newKey: K, newValue: V)(implicit
-        F: Concurrent[F]
-    ): F[Unit] =
+    private def add(newKey: K, newValue: V): F[Unit] =
       for {
         newTxnVar <- TxnVar.of(newValue)
         _ <- withLock(internalStructureLock)(
@@ -175,9 +167,7 @@ private[stm] trait TxnStateEntityContext[F[_]] {
              )
       } yield ()
 
-    private[stm] def addOrUpdate(key: K, newValue: V)(implicit
-        F: Concurrent[F]
-    ): F[Unit] =
+    private[stm] def addOrUpdate(key: K, newValue: V): F[Unit] =
       for {
         txnVarMap <- value.get
         _ <- txnVarMap.get(key) match {
@@ -188,38 +178,36 @@ private[stm] trait TxnStateEntityContext[F[_]] {
              }
       } yield ()
 
-    private[stm] def delete(key: K)(implicit F: Concurrent[F]): F[Unit] =
+    private[stm] def delete(key: K): F[Unit] =
       for {
         txnVarMap <- value.get
         _ <- txnVarMap.get(key) match {
                case Some(_) =>
                  withLock(internalStructureLock)(value.update(_ -= key))
                case None =>
-                 F.unit
+                 Async[F].unit
              }
       } yield ()
 
     override private[stm] def registerRetry(
         signal: Deferred[F, Unit]
-    )(implicit F: Concurrent[F]): F[Unit] =
+    ): F[Unit] =
       withLock(internalSignalLock)(txnRetrySignals.update(_ + signal))
   }
 
   object TxnVarMap {
 
-    def of[K, V](
-        valueMap: Map[K, V]
-    )(implicit F: Concurrent[F]): F[TxnVarMap[K, V]] =
+    def of[K, V](valueMap: Map[K, V]): F[TxnVarMap[K, V]] =
       for {
         id <- txnVarIdGen.updateAndGet(_ + 1)
         values <- valueMap.toList.traverse { kv =>
                     TxnVar.of(kv._2).map(txv => kv._1 -> txv)
                   }
-        valuesRef             <- F.ref(MutableMap(values: _*))
+        valuesRef             <- Async[F].ref(MutableMap(values: _*))
         lock                  <- Semaphore[F](1)
         internalStructureLock <- Semaphore[F](1)
         internalSignalLock    <- Semaphore[F](1)
-        signals               <- F.ref(Set[Deferred[F, Unit]]())
+        signals               <- Async[F].ref(Set[Deferred[F, Unit]]())
       } yield TxnVarMap(id,
                         valuesRef,
                         lock,

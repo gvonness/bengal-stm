@@ -21,18 +21,18 @@ import bengal.stm.TxnRuntimeContext.{IdClosure, IdClosureTallies}
 import bengal.stm.TxnStateEntityContext.{TxnId, TxnVarRuntimeId}
 
 import cats.effect.implicits._
-import cats.effect.kernel.{Concurrent, Temporal}
+import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
 import cats.effect.{Deferred, Ref}
-import cats.implicits._
+import cats.syntax.all._
 
-import scala.annotation.nowarn
-import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 import scala.collection.concurrent.{TrieMap, Map => ConcurrentMap}
+import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 import scala.concurrent.duration.FiniteDuration
 
-private[stm] trait TxnRuntimeContext[F[_]] {
-  this: TxnAdtContext[F] with TxnCompilerContext[F] with TxnLogContext[F] =>
+private[stm] abstract class TxnRuntimeContext[F[_]: Async]
+    extends TxnCompilerContext[F] {
+  this: TxnAdtContext[F] =>
 
   private[stm] val txnIdGen: Ref[F, TxnId]
 
@@ -64,66 +64,65 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       maxWaitingToProcessInLoop: Int
   ) {
 
-    private def withLock[A](semaphore: Semaphore[F])(fa: F[A])(implicit
-        F: Concurrent[F]
-    ): F[A] =
+    private def withLock[A](semaphore: Semaphore[F])(fa: F[A]): F[A] =
       semaphore.permit.use(_ => fa)
 
-    private[stm] def triggerReprocessing(implicit F: Concurrent[F]): F[Unit] =
+    private[stm] def triggerReprocessing: F[Unit] =
       schedulerTrigger.get.flatMap(_.complete(())).void
 
     private[stm] def registerCompletion(
         txnId: TxnId,
         idClosure: IdClosure
-    )(implicit F: Concurrent[F]): F[Unit] =
+    ): F[Unit] =
       for {
-        closureFib <- F.pure(closureTallies.removeIdClosure(idClosure)).start
-        _          <- waitingSemaphore.acquire
-        _          <- withLock(runningSemaphore)(F.pure(runningMap -= txnId))
+        closureFib <-
+          Async[F].delay(closureTallies.removeIdClosure(idClosure)).start
+        _ <- waitingSemaphore.acquire
+        _ <- withLock(runningSemaphore)(Async[F].delay(runningMap -= txnId))
         _ <- if (waitingBuffer.nonEmpty)
                closureFib.joinWithNever >> triggerReprocessing
-             else F.unit
+             else Async[F].unit
         _ <- waitingSemaphore.release
       } yield ()
 
     private[stm] def submitTxn[V](
         analysedTxn: AnalysedTxn[V]
-    )(implicit F: Concurrent[F]): F[Unit] =
+    ): F[Unit] =
       for {
         _ <- waitingSemaphore.acquire
-        _ <- F.pure(waitingBuffer.append(analysedTxn))
-        _ <- F.pure(closureTallies.addIdClosure(analysedTxn.idClosure))
+        _ <- Async[F].delay(waitingBuffer.append(analysedTxn))
+        _ <- Async[F].delay(closureTallies.addIdClosure(analysedTxn.idClosure))
         _ <- triggerReprocessing
         _ <- waitingSemaphore.release
       } yield ()
 
     private[stm] def submitTxnForImmediateRetry[V](
         analysedTxn: AnalysedTxn[V]
-    )(implicit F: Concurrent[F]): F[Unit] =
+    ): F[Unit] =
       for {
         _ <- waitingSemaphore.acquire
-        _ <- F.pure(waitingBuffer.prepend(analysedTxn))
-        _ <- F.pure(closureTallies.addIdClosure(analysedTxn.idClosure))
+        _ <- Async[F].delay(waitingBuffer.prepend(analysedTxn))
+        _ <- Async[F].delay(closureTallies.addIdClosure(analysedTxn.idClosure))
         _ <- triggerReprocessing
         _ <- waitingSemaphore.release
       } yield ()
 
     private def attemptExecution(
         analysedTxn: AnalysedTxn[_]
-    )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
+    ): F[Unit] =
       for {
         _ <- withLock(runningSemaphore) {
-               F.pure(runningMap += (analysedTxn.id -> analysedTxn))
+               Async[F].delay(runningMap += (analysedTxn.id -> analysedTxn))
              }
         _ <- analysedTxn.execute(this).start
       } yield ()
 
-    private def getRunningClosure(implicit F: Concurrent[F]): F[IdClosure] =
+    private def getRunningClosure: F[IdClosure] =
       for {
         _ <- runningSemaphore.acquire
         result <- if (runningMap.nonEmpty) {
                     for {
-                      innerResult <- F.pure {
+                      innerResult <- Async[F].delay {
                                        runningMap.values
                                          .map(_.idClosure)
                                          .reduce(_ mergeWith _)
@@ -140,18 +139,18 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         finalClosure: IdClosure,
         stillWaiting: List[AnalysedTxn[_]] = List(),
         cycles: Int = 0
-    )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
+    ): F[Unit] =
       if (
         waitingBuffer.nonEmpty &&
         (currentClosure != finalClosure && cycles <= maxWaitingToProcessInLoop || cycles == 0)
       ) {
         val newWaiting: F[(IdClosure, List[AnalysedTxn[_]])] = for {
-          aTxn <- F.pure(waitingBuffer.head)
-          _    <- F.pure(waitingBuffer.dropInPlace(1))
+          aTxn <- Async[F].delay(waitingBuffer.head)
+          _    <- Async[F].delay(waitingBuffer.dropInPlace(1))
           result <- if (aTxn.idClosure.isCompatibleWith(currentClosure)) {
-                      attemptExecution(aTxn) >> F.pure(stillWaiting)
+                      attemptExecution(aTxn) >> Async[F].pure(stillWaiting)
                     } else {
-                      F.pure(aTxn :: stillWaiting)
+                      Async[F].delay(aTxn :: stillWaiting)
                     }
         } yield (aTxn.idClosure, result)
 
@@ -163,13 +162,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
           )
         }
       } else {
-        F.pure(stillWaiting.foreach(waitingBuffer.prepend))
+        Async[F].delay(stillWaiting.foreach(waitingBuffer.prepend))
       }
 
-    private[stm] def reprocessWaiting(implicit
-        F: Concurrent[F],
-        TF: Temporal[F]
-    ): F[Unit] =
+    private[stm] def reprocessWaiting: F[Unit] =
       for {
         newTrigger <- Deferred[F, Unit]
         _          <- schedulerTrigger.get.flatMap(_.get)
@@ -177,7 +173,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- schedulerTrigger.set(newTrigger)
         _ <- for {
                runningClosure <- getRunningClosure
-               currentClosure <- F.pure(closureTallies.getIdClosure)
+               currentClosure <- Async[F].delay(closureTallies.getIdClosure)
                totalClosure = currentClosure.mergeWith(runningClosure)
                _ <- idClosureAnalysisRecursion(
                       runningClosure,
@@ -187,11 +183,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- waitingSemaphore.release
       } yield ()
 
-    @nowarn
-    private[stm] def reprocessingRecursion(implicit
-        F: Concurrent[F],
-        TF: Temporal[F]
-    ): F[Unit] =
+    private[stm] def reprocessingRecursion: F[Unit] =
       reprocessWaiting.flatMap(_ => reprocessingRecursion)
   }
 
@@ -224,9 +216,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       completionSignal: Deferred[F, Either[Throwable, V]]
   ) {
 
-    private[stm] def getTxnLogResult(implicit
-        F: Concurrent[F]
-    ): F[(TxnLog, Option[V])] =
+    private[stm] def getTxnLogResult: F[(TxnLog, Option[V])] =
       txn
         .foldMap[TxnLogStore](txnLogCompiler)
         .run(TxnLogValid.empty)
@@ -235,36 +225,37 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         }
         .handleErrorWith {
           case TxnRetryException(log) =>
-            F.pure((TxnLogRetry(log), None))
+            Async[F].delay((TxnLogRetry(log), None))
           case ex =>
-            F.pure((TxnLogError(ex), None))
+            Async[F].delay((TxnLogError(ex), None))
         }
 
-    private def commit(implicit F: Concurrent[F]): F[TxnResult] =
+    private val commit: F[TxnResult] =
       for {
         logResult <- getTxnLogResult
         (log, logValue) = logResult
         result <- log match {
                     case TxnLogValid(_) =>
-                      F.uncancelable { _ =>
+                      Async[F].uncancelable { _ =>
                         log.withLock {
-                          F.ifM[Option[V]](log.isDirty)(
-                            F.pure(None),
+                          Async[F].ifM[Option[V]](log.isDirty)(
+                            Async[F].delay(None),
                             log.commit.as(logValue)
                           )
                         }
                       }.flatMap { s =>
                         s.map(v =>
-                          F.pure(TxnResultSuccess(v).asInstanceOf[TxnResult])
+                          Async[F]
+                            .delay(TxnResultSuccess(v).asInstanceOf[TxnResult])
                         ).getOrElse(
                           log.idClosure
                             .map(TxnResultLogDirty(_).asInstanceOf[TxnResult])
                         )
                       }
                     case retry @ TxnLogRetry(_) =>
-                      F.uncancelable { _ =>
+                      Async[F].uncancelable { _ =>
                         retry.validLog.withLock {
-                          F.ifM[TxnResult](log.isDirty)(
+                          Async[F].ifM[TxnResult](log.isDirty)(
                             retry.validLog.idClosure.map(
                               TxnResultLogDirty(_).asInstanceOf[TxnResult]
                             ),
@@ -281,14 +272,14 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                         }
                       }
                     case err @ TxnLogError(_) =>
-                      F.pure(TxnResultFailure(err))
+                      Async[F].delay(TxnResultFailure(err))
                   }
       } yield result
 
     private[stm] def execute(
         ex: TxnScheduler
-    )(implicit F: Concurrent[F], TF: Temporal[F]): F[Unit] =
-      F.uncancelable { poll =>
+    ): F[Unit] =
+      Async[F].uncancelable { poll =>
         for {
           result <- poll(commit)
           _      <- ex.registerCompletion(id, idClosure)
@@ -300,9 +291,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                  case TxnResultRetry(retrySignal) =>
                    poll {
                      for {
-                       _ <- F.race(retrySignal.get,
-                                   TF.sleep(ex.retryWaitMaxDuration)
-                            )
+                       _ <-
+                         Async[F].race(retrySignal.get,
+                                       Async[F].sleep(ex.retryWaitMaxDuration)
+                         )
                        _ <- ex.submitTxn(this)
                      } yield ()
                    }
@@ -323,7 +315,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
 
     private[stm] val scheduler: TxnScheduler
 
-    private[stm] def commit[V](txn: Txn[V])(implicit F: Concurrent[F]): F[V] =
+    private[stm] def commit[V](txn: Txn[V]): F[V] =
       for {
         staticAnalysisResult <-
           txn
@@ -340,21 +332,21 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             // first transaction attempt)
             .handleErrorWith {
               case StaticAnalysisShortCircuitException(idClosure) =>
-                F.pure((idClosure, None))
+                Async[F].delay((idClosure, None))
               case _ =>
-                F.pure((IdClosure.empty, None))
+                Async[F].pure((IdClosure.empty, None))
             }
         completionSignal <- Deferred[F, Either[Throwable, V]]
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-
-          F.pure(
+          Async[F].delay(
             AnalysedTxn(id, txn, staticAnalysisResult._1, completionSignal)
           )
         _          <- scheduler.submitTxn(analysedTxn).start
         completion <- completionSignal.get
         result <- completion match {
-                    case Right(res) => F.pure(res)
-                    case Left(ex)   => F.raiseError(ex)
+                    case Right(res) => Async[F].pure(res)
+                    case Left(ex)   => Async[F].raiseError(ex)
                   }
       } yield result
   }
