@@ -417,17 +417,13 @@ private[stm] abstract class TxnLogContext[F[_]: Async]
 
     private[stm] def scheduleRetry: F[TxnLog]
 
-    private[stm] val isDirty: F[Boolean] =
-      Async[F].pure(false)
+    private[stm] def isDirty: F[Boolean]
 
-    private[stm] val getRetrySignal: F[Option[Deferred[F, Unit]]] =
-      Async[F].pure(None)
+    private[stm] def getRetrySignal: F[Option[Deferred[F, Unit]]]
 
-    private[stm] val commit: F[Unit] =
-      Async[F].unit
+    private[stm] def commit: F[Unit]
 
-    private[stm] val idClosure: F[IdClosure] =
-      Async[F].pure(IdClosure.empty)
+    private[stm] def idClosure: F[IdClosure]
 
     private[stm] def withLock[A](fa: F[A]): F[A] =
       fa
@@ -1014,7 +1010,7 @@ private[stm] abstract class TxnLogContext[F[_]: Async]
     // using existence in a parallel traversal. I.e. we have
     // enough parallelism in the runtime to ensure good hardware
     // utilisation
-    override private[stm] val isDirty: F[Boolean] =
+    override private[stm] lazy val isDirty: F[Boolean] =
       log.values.toList.foldLeft(Async[F].pure(false)) { (i, j) =>
         for {
           prev <- i
@@ -1026,7 +1022,7 @@ private[stm] abstract class TxnLogContext[F[_]: Async]
         } yield result
       }
 
-    override private[stm] val idClosure: F[IdClosure] =
+    override private[stm] lazy val idClosure: F[IdClosure] =
       log.values.toList.parTraverse { entry =>
         entry.idClosure
       }.map(_.reduce(_ mergeWith _))
@@ -1040,8 +1036,12 @@ private[stm] abstract class TxnLogContext[F[_]: Async]
             .use(_ => fa)
       } yield result
 
-    override private[stm] val commit: F[Unit] =
+    override private[stm] lazy val commit: F[Unit] =
       log.values.toList.parTraverse(_.commit).void
+
+    override private[stm] lazy val getRetrySignal
+        : F[Option[Deferred[F, Unit]]] =
+      Async[F].pure(None)
   }
 
   private[stm] object TxnLogValid {
@@ -1084,10 +1084,11 @@ private[stm] abstract class TxnLogContext[F[_]: Async]
           } yield (this, v)
       }
 
-    override private[stm] val isDirty: F[Boolean] =
+    override private[stm] lazy val isDirty: F[Boolean] =
       validLog.isDirty
 
-    override private[stm] val getRetrySignal: F[Option[Deferred[F, Unit]]] =
+    override private[stm] lazy val getRetrySignal
+        : F[Option[Deferred[F, Unit]]] =
       for {
         retrySignal <- Deferred[F, Unit]
         registerRetries <-
@@ -1097,6 +1098,12 @@ private[stm] abstract class TxnLogContext[F[_]: Async]
 
     override private[stm] lazy val scheduleRetry =
       Async[F].pure(this)
+
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
+
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].pure(IdClosure.empty)
   }
 
   private[stm] case class TxnLogError(ex: Throwable) extends TxnLog {
@@ -1108,6 +1115,19 @@ private[stm] abstract class TxnLogContext[F[_]: Async]
 
     override private[stm] lazy val scheduleRetry =
       Async[F].pure(this)
+
+    override private[stm] lazy val isDirty =
+      Async[F].pure(false)
+
+    override private[stm] lazy val commit: F[Unit] =
+      Async[F].unit
+
+    override private[stm] lazy val idClosure: F[IdClosure] =
+      Async[F].pure(IdClosure.empty)
+
+    override private[stm] lazy val getRetrySignal
+        : F[Option[Deferred[F, Unit]]] =
+      Async[F].pure(None)
   }
 
   private[stm] case class TxnRetryException(validLog: TxnLogValid)

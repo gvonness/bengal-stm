@@ -19,7 +19,6 @@ package bengal.stm
 
 import cats.free.Free
 
-import scala.annotation.nowarn
 import scala.util.{Failure, Success, Try}
 
 private[stm] trait TxnApiContext[F[_]] {
@@ -90,7 +89,6 @@ private[stm] trait TxnApiContext[F[_]] {
       _     <- setTxnVarMap(f(value), txnVarMap)
     } yield ()
 
-  @nowarn
   private[stm] def getTxnVarMapValue[K, V](
       key: => K,
       txnVarMap: TxnVarMap[K, V]
