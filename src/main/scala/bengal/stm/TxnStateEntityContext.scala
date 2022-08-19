@@ -58,10 +58,10 @@ private[stm] abstract class TxnStateEntityContext[F[_]: Async] {
   }
 
   case class TxnVar[T](
-      id: TxnVarId,
+      private[stm] val id: TxnVarId,
       protected val value: Ref[F, T],
-      commitLock: Semaphore[F],
-      txnRetrySignals: TxnSignals
+      private[stm] val commitLock: Semaphore[F],
+      private[stm] val txnRetrySignals: TxnSignals
   ) extends TxnStateEntity[T] {
 
     private def completeRetrySignals: F[Unit] =
@@ -94,12 +94,12 @@ private[stm] abstract class TxnStateEntityContext[F[_]: Async] {
   }
 
   case class TxnVarMap[K, V](
-      id: TxnVarId,
+      private[stm] val id: TxnVarId,
       protected val value: Ref[F, VarIndex[K, V]],
-      commitLock: Semaphore[F],
+      private[stm] val commitLock: Semaphore[F],
       private val internalStructureLock: Semaphore[F],
       private val internalSignalLock: Semaphore[F],
-      txnRetrySignals: TxnSignals
+      private[stm] val txnRetrySignals: TxnSignals
   ) extends TxnStateEntity[VarIndex[K, V]] {
 
     private def withLock[A](semaphore: Semaphore[F])(
