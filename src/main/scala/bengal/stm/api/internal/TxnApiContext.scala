@@ -36,8 +36,8 @@ private[stm] trait TxnApiContext[F[_]] {
   val unit: Txn[Unit] =
     liftSuccess(TxnUnit)
 
-  def delay[V](value: => V): Txn[V] =
-    liftSuccess(TxnDelay(() => value))
+  def delay[V](thunk: => V): Txn[V] =
+    liftSuccess(TxnDelay(() => thunk))
 
   def pure[V](value: V): Txn[V] =
     liftSuccess(TxnPure(value))
