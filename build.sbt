@@ -1,4 +1,4 @@
-ThisBuild / baseVersion := "0.4.0"
+ThisBuild / baseVersion := "0.5.0"
 ThisBuild / organization := "ai.entrolution"
 ThisBuild / organizationName := "Greg von Nessi"
 ThisBuild / publishGithubUser := "gvonness"
@@ -26,10 +26,11 @@ ThisBuild / crossScalaVersions := Seq("2.13.8")
 
 Global / excludeLintKeys += idePackagePrefix
 
-libraryDependencies += "org.typelevel" %% "cats-free"   % "2.7.0"
-libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.12"
-libraryDependencies += "org.scalatest" %% "scalatest"   % "3.2.12" % "test"
+libraryDependencies += "org.typelevel" %% "cats-free"                     % "2.8.0"
+libraryDependencies += "org.typelevel" %% "cats-effect"                   % "3.3.14"
+libraryDependencies += "org.typelevel" %% "cats-effect-testing-scalatest" % "1.4.0" % "test"
 
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.12" % "test"
 idePackagePrefix := Some("ai.entrolution")
 
 scalacOptions ++= Seq(
@@ -45,3 +46,4 @@ scalacOptions ++= Seq(
 )
 
 enablePlugins(SonatypeCiReleasePlugin)
+addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1" % "test")

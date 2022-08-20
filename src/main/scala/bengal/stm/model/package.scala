@@ -15,13 +15,11 @@
  */
 
 package ai.entrolution
+package bengal.stm
 
-import bengal.stm.STM
+import cats.free.Free
 
-import cats.effect.IO
-import cats.effect.unsafe.IORuntime
-
-trait StmRuntimeFixture {
-  implicit val runtime: IORuntime = cats.effect.unsafe.IORuntime.global
-  val stm: STM[IO]                = STM.runtime[IO].unsafeRunSync()
+package object model {
+  type Txn[V]                   = Free[TxnOrErr, V]
+  private[stm] type TxnOrErr[V] = Either[TxnErratum, TxnAdt[V]]
 }

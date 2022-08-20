@@ -15,9 +15,11 @@
  */
 
 package ai.entrolution
-package bengal.stm
+package bengal.stm.runtime
 
-import bengal.stm.TxnRuntimeContext.IdClosure
+import bengal.stm.model.TxnErratum._
+import bengal.stm.model._
+import bengal.stm.model.runtime._
 
 import cats.arrow.FunctionK
 import cats.data.StateT
@@ -49,10 +51,10 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
             entry match {
               case TxnUnit =>
                 noOp[IdClosure].map(_.asInstanceOf[V])
-              case TxnPure(value) =>
+              case TxnDelay(thunk) =>
                 StateT[F, IdClosure, V] { s =>
                   Async[F].delay {
-                    Try(value()) match {
+                    Try(thunk()) match {
                       case Success(materializedValue) =>
                         (s, materializedValue)
                       case _ =>
@@ -60,6 +62,8 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                     }
                   }
                 }
+              case TxnPure(value) =>
+                StateT[F, IdClosure, V](s => Async[F].pure((s, value)))
               case TxnGetVar(txnVar) =>
                 StateT[F, IdClosure, V] { s =>
                   txnVar.get.map { v =>
@@ -186,6 +190,8 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                       Async[F].delay((s, ().asInstanceOf[V]))
                   }
                 }
+              case _ =>
+                noOp[IdClosure].map(_.asInstanceOf[V])
             }
           case _ =>
             noOp[IdClosure].map(_.asInstanceOf[V])
@@ -201,6 +207,10 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
             entry match {
               case TxnUnit =>
                 noOp[TxnLog].map(_.asInstanceOf[V])
+              case TxnDelay(thunk) =>
+                StateT[F, TxnLog, V] { s =>
+                  s.delay(thunk)
+                }
               case TxnPure(value) =>
                 StateT[F, TxnLog, V] { s =>
                   s.pure(value)
@@ -270,6 +280,8 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                       s.raiseError(exception).map((_, ().asInstanceOf[V]))
                   }
                 }
+              case _ =>
+                noOp[TxnLog].map(_.asInstanceOf[V])
             }
           case Left(erratum) =>
             erratum match {

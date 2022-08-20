@@ -17,7 +17,10 @@
 package ai.entrolution
 package bengal.stm
 
-import bengal.stm.TxnStateEntityContext.{TxnId, TxnVarId}
+import bengal.stm.api.internal.TxnApiContext
+import bengal.stm.model._
+import bengal.stm.model.runtime._
+import bengal.stm.runtime.TxnRuntimeContext
 
 import cats.effect.Ref
 import cats.effect.implicits._
@@ -32,11 +35,11 @@ trait STM[F[_]]
     with TxnApiContext[F]
     with TxnAdtContext[F] {
 
-  def allocateTxnVar[V](value: V): F[TxnVar[V]]
-  def allocateTxnVarMap[K, V](valueMap: Map[K, V]): F[TxnVarMap[K, V]]
-  protected def commitTxn[V](txn: Txn[V]): F[V]
+  def allocateTxnVar[V](value: V): F[TxnVar[F, V]]
+  def allocateTxnVarMap[K, V](valueMap: Map[K, V]): F[TxnVarMap[F, K, V]]
+  private[stm] def commitTxn[V](txn: Txn[V]): F[V]
 
-  implicit class TxnVarOps[V](txnVar: TxnVar[V]) {
+  implicit class TxnVarOps[V](txnVar: TxnVar[F, V]) {
 
     def get: Txn[V] =
       getTxnVar(txnVar)
@@ -48,7 +51,7 @@ trait STM[F[_]]
       modifyTxnVar(f, txnVar)
   }
 
-  implicit class TxnVarMapOps[K, V](txnVarMap: TxnVarMap[K, V]) {
+  implicit class TxnVarMapOps[K, V](txnVarMap: TxnVarMap[F, K, V]) {
 
     def get: Txn[Map[K, V]] =
       getTxnVarMap(txnVarMap)
@@ -84,6 +87,9 @@ trait STM[F[_]]
 
 object STM {
 
+  def apply[F[_]](implicit stm: STM[F]): STM[F] =
+    stm
+
   def runtime[F[_]: Async]: F[STM[F]] =
     runtime(FiniteDuration(Long.MaxValue, NANOSECONDS),
             Runtime.getRuntime.availableProcessors() * 2
@@ -116,14 +122,15 @@ object STM {
                      )
                  }
 
-                 override def allocateTxnVar[V](value: V): F[TxnVar[V]] =
-                   TxnVar.of(value)
+                 override def allocateTxnVar[V](value: V): F[TxnVar[F, V]] =
+                   TxnVar.of(value)(this, Async[F])
 
                  override def allocateTxnVarMap[K, V](
                      valueMap: Map[K, V]
-                 ): F[TxnVarMap[K, V]] = TxnVarMap.of(valueMap)
+                 ): F[TxnVarMap[F, K, V]] =
+                   TxnVarMap.of(valueMap)(this, Async[F])
 
-                 override protected def commitTxn[V](txn: Txn[V]): F[V] =
+                 override private[stm] def commitTxn[V](txn: Txn[V]): F[V] =
                    txnRuntime.commit(txn)
                }
              }

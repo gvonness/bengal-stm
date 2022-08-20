@@ -21,7 +21,7 @@ As there are already many solid references on STM, I will not dive into STM theo
 
 Example | Description | Type Signature | Notes
 :--- | --- | :--- | :---
-`STM.runtime[IO].unsaferunsync()` | Creates a runtime whose transaction results can be lifted into a container `F[_]` via `commit` | `def runtime[F[_]: Concurrent: Temporal](retryMaxWait: FiniteDuration, maxWaitingToProcessInLoop: Int): F[STM[F]]` <br/>or<br/> `def runtime[F[_]: Concurrent: Temporal]: F[STM[F]]` (default `retryMaxWait`) | `retryMaxWait` is a backstop max amount of time to wait before retrying a transaction. <br/><br/>Default: `FiniteDuration(Long.MaxValue, NANOSECONDS)` <br/><br/> It is _not_ recommended to make this a small value (i.e. making retries effectively based on polling).<br/><br/>`maxWaitingToProcessInLoop` corresponds to max amount of waiting transactions the runtime will attempt to process in its runtime loop. It is not recommended to alter this value.<br/><br/>Default: `Runtime.getRuntime.availableProcessors() * 2`
+`STM.runtime[F]` | Creates a runtime in an `F[_]` container whose transaction results can be lifted into a container `F[_]` via `commit` | `def runtime[F[_]: Async](retryMaxWait: FiniteDuration, maxWaitingToProcessInLoop: Int): F[STM[F]]` <br/>or<br/> `def runtime[F[_]: Async]: F[STM[F]]` (default `retryMaxWait`) | `retryMaxWait` is a backstop max amount of time to wait before retrying a transaction. <br/><br/>Default: `FiniteDuration(Long.MaxValue, NANOSECONDS)` <br/><br/> It is _not_ recommended to make this a small value (i.e. making retries effectively based on polling).<br/><br/>`maxWaitingToProcessInLoop` corresponds to max amount of waiting transactions the runtime will attempt to process in its runtime loop. It is not recommended to alter this value.<br/><br/>Default: `Runtime.getRuntime.availableProcessors() * 2`
 `txnVar.get.commit` | Commits a transaction and lifts the result into `F[_]` | `def commit: F[V]` | 
 `TxnVar.of[List[Int]](List())` | Creates a transactional variable | ```def of[T](value: T): F[TxnVar[T]]``` 
 `TxnVarMap.of[String, Int](Map())` | Creates a transactional map | ```of[K, V](valueMap: Map[K, V]): F[TxnVarMap[K, V]]``` 
@@ -36,6 +36,7 @@ Example | Description | Type Signature | Notes
 `txnVarMap.modify(_.map(i => i._1 -> i._2*2))` | Modifies all the values in the map | ```def modify(f: Map[K, V] => Map[K, V]): Txn[Unit]``` | Transform can create/delete entries.<br/><br/>Again, for performance it is better to work with individual key-value pairs instead of manipulating map views
 `txnVarMap.remove("David")` | Removes a key-value from the transactional map | ```def remove(key: K): Txn[Unit]``` | Will throw an error if the key doesn't actually exist in the map (to be consistent with `get` behaviour)
 `pure(10)` | Lifts a value into a transactional monad | ```def pure[V](value: V): Txn[V]``` |
+`delay(10+2)` | Lifts a computation into a transactional monad (by-name value) | ```def delay[V](value: => V): Txn[V]``` | Argument will be evaluated every time a transaction is attempted. It is not advised to use with side effects.
 `abort(new RuntimeException("foo"))` | Aborts the current transaction | ```def abort(ex: Throwable): Txn[Unit]``` | Variables/Maps changes in the transaction will not be changed if the transaction is aborted
 `txn.handleErrorWith(_ => pure("bar"))` | Absorbs an error/abort and remaps to another transaction (of the same wrapped type) | ```def handleErrorWith(f: Throwable => Txn[V]): Txn[V]``` |
 `waitFor(value > 10)` | Semantically blocks a transaction until a condition is met | ```def waitFor(predicate: => Boolean): Txn[Unit]``` | Blocking is only semantic (i.e. not locking up a thread while waiting)<br/><br/>This is implemented via retries that are initiated via variable/map updates. One can specify the `retryMaxWait` to facilitate backstop polling for these retries, but this is _not_ recommended (i.e. indicates side-effects are impacting predicate)
@@ -43,46 +44,51 @@ Example | Description | Type Signature | Notes
 ### Example
 
 ```scala
+import bengal.stm.STM
+import bengal.stm.model._
+import bengal.stm.syntax.all._
+
+import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, IOApp}
 
 import scala.concurrent.duration._
 
-import ai.entrolution.bengal.stm._
-
 object Main extends IOApp.Simple {
 
-  override def run: IO[Unit] = STM.runtime[IO].flatMap(run)
+  implicit val stm: STM[IO] = STM.runtime[IO].unsafeRunSync()
 
-  def run(stm: STM[IO]): IO[Unit] = {
-    import stm._
-
-    def createAccount(name: String,
-                      initialBalance: Int,
-                      accounts: TxnVarMap[String, Int]): IO[Unit] =
+  def run: IO[Unit] = {
+    def createAccount(
+                       name: String,
+                       initialBalance: Int,
+                       accounts: TxnVarMap[IO, String, Int]
+                     ): IO[Unit] =
       accounts.set(name, initialBalance).commit
 
-    def transferFunds(accounts: TxnVarMap[String, Int], 
-                      bankOpen: TxnVar[Boolean], 
-                      to: String, 
-                      from: String, 
-                      amount: Int): IO[Unit] =
+    def transferFunds(
+                       accounts: TxnVarMap[IO, String, Int],
+                       bankOpen: TxnVar[IO, Boolean],
+                       to: String,
+                       from: String,
+                       amount: Int
+                     ): IO[Unit] =
       (for {
         balance    <- accounts.get(from)
         isBankOpen <- bankOpen.get
-        _          <- stm.waitFor(isBankOpen)
-        _          <- stm.waitFor(balance.exists(_ >= amount))
+        _          <- STM[IO].waitFor(isBankOpen)
+        _          <- STM[IO].waitFor(balance.exists(_ >= amount))
         _          <- accounts.modify(from, _ - amount)
         _          <- accounts.modify(to, _ + amount)
       } yield ()).commit
 
-    def openBank(bankOpen: TxnVar[Boolean]): IO[Unit] =
+    def openBank(bankOpen: TxnVar[IO, Boolean]): IO[Unit] =
       for {
         _ <- IO.sleep(1000.millis)
         _ <- IO(println("Bank Open!"))
         _ <- bankOpen.set(true).commit
       } yield ()
 
-    def printAccounts(accounts: TxnVarMap[String, Int]): IO[Unit] =
+    def printAccounts(accounts: TxnVarMap[IO, String, Int]): IO[Unit] =
       for {
         accounts <- accounts.get.commit
         _ <- IO {
@@ -93,8 +99,8 @@ object Main extends IOApp.Simple {
       } yield ()
 
     for {
-      bankOpen <- TxnVar.of[Boolean](false)
-      accounts <- TxnVarMap.of[String, Int](Map())
+      bankOpen <- TxnVar.of(false)
+      accounts <- TxnVarMap.of[IO, String, Int](Map())
       _        <- createAccount("David", 100, accounts)
       _        <- createAccount("Sasha", 0, accounts)
       _        <- printAccounts(accounts)
