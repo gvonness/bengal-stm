@@ -16,17 +16,20 @@
 
 package ai.entrolution
 
+import bengal.stm.STM
+import bengal.stm.model._
+import bengal.stm.syntax.all._
+
+import cats.effect.IO
 import org.scalatest.flatspec.AnyFlatSpec
 
 import scala.collection.immutable.Queue
 
 class StmRuntimeSpec extends AnyFlatSpec {
   "commit" should "correctly execute multiple programs" in new StmRuntimeFixture {
-    import stm._
+    val txnVarTest: TxnVar[IO, Int] = TxnVar.of(11).unsafeRunSync()
 
-    val txnVarTest: TxnVar[Int] = TxnVar.of(11).unsafeRunSync()
-
-    val txnVarMapTest: TxnVarMap[String, Int] =
+    val txnVarMapTest: TxnVarMap[IO, String, Int] =
       TxnVarMap.of(Map("foo" -> 5, "bar" -> 1)).unsafeRunSync()
 
     val program1: Txn[Int] = for {
@@ -35,7 +38,7 @@ class StmRuntimeSpec extends AnyFlatSpec {
       _  <- txnVarMapTest.set("foobaz", 4)
       v4 <- txnVarMapTest.get("foobaz") // 4
       _  <- txnVarMapTest.set(Map("foobar" -> -10, "barbaz" -> 77))
-      _  <- stm.waitFor(v0 > 2)
+      _  <- STM[IO].waitFor(v0 > 2)
       _  <- txnVarTest.modify(_ + 5)
       v2 <- txnVarTest.get // 16
       v3 <- txnVarTest.get // 16
@@ -43,7 +46,7 @@ class StmRuntimeSpec extends AnyFlatSpec {
       _  <- txnVarMapTest.remove("barbaz")
       v6 <- txnVarMapTest.get // Map("foobar" -> -10)
       v7 <- txnVarMapTest.get("foo") // None
-      v8 <- stm.pure(12)
+      v8 <- STM[IO].delay(12)
     } yield List[Option[Int]](
       Some(v0),            // 11
       v1,                  // Some(5)
@@ -58,12 +61,12 @@ class StmRuntimeSpec extends AnyFlatSpec {
 
     val program2: Txn[Int] = for {
       v0 <- txnVarTest.get // 16
-      _  <- stm.waitFor(v0 > 12)
+      _  <- STM[IO].waitFor(v0 > 12)
       _  <- txnVarMapTest.set("foo", -33)
       _  <- txnVarTest.modify(_ + 5)
       v1 <- txnVarTest.get // 21
       v2 <- txnVarMapTest.get // Map("foo" -> -33, "foobar" -> -10)
-      _  <- stm.unit
+      _  <- STM[IO].unit
     } yield v0 + v1 + v2.values.sum // -6
 
     assertResult(125) {
@@ -77,18 +80,17 @@ class StmRuntimeSpec extends AnyFlatSpec {
   }
 
   it should "correctly execute with transient evaluation errors in the static analysis" in new StmRuntimeFixture {
-    import stm._
 
-    val txnVarQueue: TxnVar[Queue[Int]] =
+    val txnVarQueue: TxnVar[IO, Queue[Int]] =
       TxnVar.of(Queue[Int]()).unsafeRunSync()
 
-    val txnVar: TxnVar[Int] =
+    val txnVar: TxnVar[IO, Int] =
       TxnVar.of(0).unsafeRunSync()
 
     val program1: Txn[Unit] = for {
       queueResult <- txnVarQueue.get
-      _           <- waitFor(queueResult.nonEmpty)
-      result      <- stm.pure(queueResult.dequeue)
+      _           <- STM[IO].waitFor(queueResult.nonEmpty)
+      result      <- STM[IO].delay(queueResult.dequeue)
       _           <- txnVarQueue.set(result._2)
       _           <- txnVar.set(result._1)
     } yield ()

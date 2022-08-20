@@ -15,13 +15,6 @@
  */
 
 package ai.entrolution
+package bengal.stm.model
 
-import bengal.stm.STM
-
-import cats.effect.IO
-import cats.effect.unsafe.IORuntime
-
-trait StmRuntimeFixture {
-  implicit val runtime: IORuntime = cats.effect.unsafe.IORuntime.global
-  implicit val stm: STM[IO]       = STM.runtime[IO].unsafeRunSync()
-}
+private[stm] trait TxnAdt[V]

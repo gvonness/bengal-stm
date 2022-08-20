@@ -16,13 +16,15 @@
 
 package ai.entrolution
 
+import bengal.stm.model._
+import bengal.stm.syntax.all._
+
+import cats.effect.IO
 import org.scalatest.flatspec.AnyFlatSpec
 
 class TxnVarSpec extends AnyFlatSpec {
   "TxnVar.get" should "return the value of a transactional variable" in new StmRuntimeFixture {
-    import stm._
-
-    val tVar: TxnVar[Int] = TxnVar.of(123).unsafeRunSync()
+    val tVar: TxnVar[IO, Int] = TxnVar.of(123).unsafeRunSync()
 
     assertResult(123) {
       tVar.get.commit.unsafeRunSync()
@@ -30,9 +32,8 @@ class TxnVarSpec extends AnyFlatSpec {
   }
 
   "TxnVar.set" should "update the value of a transactional variable" in new StmRuntimeFixture {
-    import stm._
 
-    val tVar: TxnVar[Int] = TxnVar.of(123).unsafeRunSync()
+    val tVar: TxnVar[IO, Int] = TxnVar.of(123).unsafeRunSync()
 
     tVar.set(2718).commit.unsafeRunSync()
 
@@ -42,9 +43,8 @@ class TxnVarSpec extends AnyFlatSpec {
   }
 
   "TxnVar.modify" should "modify the value of a transactional variable" in new StmRuntimeFixture {
-    import stm._
 
-    val tVar: TxnVar[String] = TxnVar.of("foo").unsafeRunSync()
+    val tVar: TxnVar[IO, String] = TxnVar.of("foo").unsafeRunSync()
 
     tVar.modify(_ + "bar").commit.unsafeRunSync()
 

@@ -15,13 +15,17 @@
  */
 
 package ai.entrolution
+package bengal.stm.model
 
-import bengal.stm.STM
+import cats.effect.{Deferred, Ref}
 
-import cats.effect.IO
-import cats.effect.unsafe.IORuntime
+import scala.collection.mutable.{Map => MutableMap}
 
-trait StmRuntimeFixture {
-  implicit val runtime: IORuntime = cats.effect.unsafe.IORuntime.global
-  implicit val stm: STM[IO]       = STM.runtime[IO].unsafeRunSync()
+package object runtime {
+  private[stm] type TxnVarId        = Long
+  private[stm] type TxnVarRuntimeId = Int
+  private[stm] type TxnId           = Long
+
+  private[stm] type VarIndex[F[_], K, V] = MutableMap[K, TxnVar[F, V]]
+  private[stm] type TxnSignals[F[_]]     = Ref[F, Set[Deferred[F, Unit]]]
 }

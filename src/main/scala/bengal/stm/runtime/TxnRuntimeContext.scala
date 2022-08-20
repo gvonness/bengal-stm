@@ -15,10 +15,10 @@
  */
 
 package ai.entrolution
-package bengal.stm
+package bengal.stm.runtime
 
-import bengal.stm.TxnRuntimeContext.{IdClosure, IdClosureTallies}
-import bengal.stm.TxnStateEntityContext.{TxnId, TxnVarRuntimeId}
+import bengal.stm.model.runtime._
+import bengal.stm.model._
 
 import cats.effect.implicits._
 import cats.effect.kernel.Async
@@ -26,7 +26,6 @@ import cats.effect.std.Semaphore
 import cats.effect.{Deferred, Ref}
 import cats.syntax.all._
 
-import scala.collection.concurrent.{TrieMap, Map => ConcurrentMap}
 import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 import scala.concurrent.duration.FiniteDuration
 
@@ -35,6 +34,7 @@ private[stm] abstract class TxnRuntimeContext[F[_]: Async]
   this: TxnAdtContext[F] =>
 
   private[stm] val txnIdGen: Ref[F, TxnId]
+  private[stm] val txnVarIdGen: Ref[F, TxnVarId]
 
   private[stm] sealed trait TxnResult
   private[stm] case class TxnResultSuccess[V](result: V) extends TxnResult
@@ -349,101 +349,5 @@ private[stm] abstract class TxnRuntimeContext[F[_]: Async]
                     case Left(ex)   => Async[F].raiseError(ex)
                   }
       } yield result
-  }
-}
-
-private[stm] object TxnRuntimeContext {
-
-  private[stm] case class IdClosure(
-      readIds: Set[TxnVarRuntimeId],
-      updatedIds: Set[TxnVarRuntimeId]
-  ) {
-
-    private[stm] lazy val combinedIds: Set[TxnVarRuntimeId] =
-      readIds ++ updatedIds
-
-    private[stm] def addReadId(id: TxnVarRuntimeId): IdClosure =
-      this.copy(readIds = readIds + id)
-
-    private[stm] def addWriteId(id: TxnVarRuntimeId): IdClosure =
-      this.copy(updatedIds = updatedIds + id)
-
-    private[stm] def mergeWith(idScope: IdClosure): IdClosure =
-      this.copy(readIds = readIds ++ idScope.readIds,
-                updatedIds = updatedIds ++ idScope.updatedIds
-      )
-
-    private[stm] def isCompatibleWith(idScope: IdClosure): Boolean =
-      combinedIds.intersect(idScope.updatedIds).isEmpty && idScope.combinedIds
-        .intersect(updatedIds)
-        .isEmpty
-  }
-
-  private[stm] object IdClosure {
-    private[stm] val empty: IdClosure = IdClosure(Set(), Set())
-  }
-
-  private[stm] case class IdClosureTallies(
-      private val readIdTallies: ConcurrentMap[TxnVarRuntimeId, Int],
-      private val updatedIdTallies: ConcurrentMap[TxnVarRuntimeId, Int]
-  ) {
-
-    private def addReadId(id: TxnVarRuntimeId): Unit =
-      readIdTallies += (id -> (readIdTallies.getOrElse(id, 0) + 1))
-
-    private def removeReadId(id: TxnVarRuntimeId): Unit = {
-      val newValue: Int = readIdTallies.getOrElse(id, 0) - 1
-      if (newValue < 1) {
-        readIdTallies -= id
-      } else {
-        readIdTallies += (id -> newValue)
-      }
-    }
-
-    private def addUpdateId(id: TxnVarRuntimeId): Unit =
-      updatedIdTallies += (id -> (updatedIdTallies.getOrElse(id, 0) + 1))
-
-    private def removeUpdateId(id: TxnVarRuntimeId): Unit = {
-      val newValue: Int = updatedIdTallies.getOrElse(id, 0) - 1
-      if (newValue < 1) {
-        updatedIdTallies -= id
-      } else {
-        updatedIdTallies += (id -> newValue)
-      }
-    }
-
-    private def addReadIds(ids: Set[TxnVarRuntimeId]): Unit =
-      ids.foreach(addReadId)
-
-    private def removeReadIds(ids: Set[TxnVarRuntimeId]): Unit =
-      ids.foreach(removeReadId)
-
-    private def addUpdateIds(ids: Set[TxnVarRuntimeId]): Unit =
-      ids.foreach(addUpdateId)
-
-    private def removeUpdateIds(ids: Set[TxnVarRuntimeId]): Unit =
-      ids.foreach(removeUpdateId)
-
-    private[stm] def addIdClosure(idClosure: IdClosure): Unit = {
-      addReadIds(idClosure.readIds)
-      addUpdateIds(idClosure.updatedIds)
-    }
-
-    private[stm] def removeIdClosure(idClosure: IdClosure): Unit = {
-      removeReadIds(idClosure.readIds)
-      removeUpdateIds(idClosure.updatedIds)
-    }
-
-    private[stm] def getIdClosure: IdClosure =
-      IdClosure(
-        readIds = readIdTallies.keySet.toSet,
-        updatedIds = updatedIdTallies.keySet.toSet
-      )
-  }
-
-  private[stm] object IdClosureTallies {
-
-    private[stm] def empty: IdClosureTallies =
-      IdClosureTallies(TrieMap.empty, TrieMap.empty)
   }
 }

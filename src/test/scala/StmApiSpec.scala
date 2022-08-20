@@ -16,15 +16,29 @@
 
 package ai.entrolution
 
+import bengal.stm.STM
+import bengal.stm.model._
+import bengal.stm.syntax.all._
+
+import cats.effect.IO
 import org.scalatest.flatspec.AnyFlatSpec
 
 class StmApiSpec extends AnyFlatSpec {
 
-  "pure" should "yield argument value" in new StmRuntimeFixture {
-    import stm._
+  "delay" should "yield argument value" in new StmRuntimeFixture {
 
     val pureTxn: Txn[String] =
-      stm.pure("foo")
+      STM[IO].delay("foo")
+
+    assertResult("foo") {
+      pureTxn.commit.unsafeRunSync()
+    }
+  }
+
+  "pure" should "yield argument value" in new StmRuntimeFixture {
+
+    val pureTxn: Txn[String] =
+      STM[IO].pure("foo")
 
     assertResult("foo") {
       pureTxn.commit.unsafeRunSync()
@@ -32,10 +46,9 @@ class StmApiSpec extends AnyFlatSpec {
   }
 
   "raiseError" should "throw an error when run" in new StmRuntimeFixture {
-    import stm._
 
     val errorTxn: Txn[Unit] =
-      stm.abort(new RuntimeException("test error"))
+      STM[IO].abort(new RuntimeException("test error"))
 
     assertThrows[RuntimeException] {
       errorTxn.commit.unsafeRunSync()
@@ -43,32 +56,30 @@ class StmApiSpec extends AnyFlatSpec {
   }
 
   "handleErrorWith" should "recover from an error" in new StmRuntimeFixture {
-    import stm._
-
     val mockError = new RuntimeException("mock error")
 
     assertResult(mockError.getMessage) {
       stm
         .abort(mockError)
-        .flatMap(_ => stm.pure("test"))
-        .handleErrorWith(ex => stm.pure(ex.getMessage))
+        .flatMap(_ => STM[IO].delay("test"))
+        .handleErrorWith(ex => STM[IO].delay(ex.getMessage))
         .commit
         .unsafeRunSync()
     }
   }
 
   it should "bypass mutations from the error transaction" in new StmRuntimeFixture {
-    import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertResult(Some(44)) {
       (for {
         result <- tVarMap.get("foo")
         _      <- tVarMap.modify("foo", _ + 3)
-        _      <- stm.abort(new RuntimeException("fake exception"))
+        _      <- STM[IO].abort(new RuntimeException("fake exception"))
         _      <- tVarMap.modify("foo", _ + 2)
       } yield result).handleErrorWith { _ =>
         for {
@@ -81,13 +92,11 @@ class StmApiSpec extends AnyFlatSpec {
 
   "waitFor" should "should complete when predicate is satisfied" in new StmRuntimeFixture {
 
-    import stm._
-
-    val tVar: TxnVar[Int] = TxnVar.of(1).unsafeRunSync()
+    val tVar: TxnVar[IO, Int] = TxnVar.of(1).unsafeRunSync()
 
     val program1: Txn[Int] = for {
       result <- tVar.get
-      _      <- waitFor(result > 3)
+      _      <- STM[IO].waitFor(result > 3)
     } yield result
 
     val program2: Txn[Unit] =

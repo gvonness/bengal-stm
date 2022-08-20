@@ -16,15 +16,19 @@
 
 package ai.entrolution
 
+import bengal.stm.model._
+import bengal.stm.syntax.all._
+
+import cats.effect.IO
 import org.scalatest.flatspec.AnyFlatSpec
 
 class TxnVarMapSpec extends AnyFlatSpec {
   "TxnVarMap.get" should "return the value of a transactional map" in new StmRuntimeFixture {
-    import stm._
 
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertResult(baseMap) {
       tVarMap.get.commit.unsafeRunSync()
@@ -32,12 +36,11 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   "TxnVarMap.set" should "should update the underpinning map" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
     val newMap  = Map("foo" -> -10, "foobaz" -> 31)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     tVarMap.set(newMap).commit.unsafeRunSync()
 
@@ -47,7 +50,6 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   "TxnVarMap.modify" should "should modify values according to the specified transform" in new StmRuntimeFixture {
-    import stm._
 
     def mapTransform(input: Map[String, Int]): Map[String, Int] =
       input.map(i => i._1 -> i._2 * 2)
@@ -55,7 +57,8 @@ class TxnVarMapSpec extends AnyFlatSpec {
     val baseMap   = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
     val resultMap = Map("foo" -> 84, "bar" -> 54, "baz" -> 36)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     tVarMap.modify(mapTransform).commit.unsafeRunSync()
 
@@ -65,11 +68,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   "TxnVarMap.get(key)" should "return the value of transactional variable" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertResult(Some(42)) {
       tVarMap.get("foo").commit.unsafeRunSync()
@@ -77,11 +79,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   it should "throw an error if key isn't present" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertThrows[RuntimeException] {
       tVarMap.get("foobar").commit.unsafeRunSync()
@@ -89,11 +90,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   it should "return None if the key is deleted in the current transaction" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertResult(None) {
       (for {
@@ -104,11 +104,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   "TxnVarMap.set(key)" should "update values for existing keys" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     tVarMap.set("foo", 2).commit.unsafeRunSync()
 
@@ -118,11 +117,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   it should "creates new entry for non-existent key" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     tVarMap.set("foobaz", 2).commit.unsafeRunSync()
 
@@ -132,11 +130,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   "TxnVarMap.modify(key)" should "modify value for pre-existing entry" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     tVarMap.modify("baz", _ - 12).commit.unsafeRunSync()
 
@@ -146,11 +143,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   it should "throw an error if key isn't present" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertThrows[RuntimeException] {
       tVarMap.modify("foobar", _ + 2).commit.unsafeRunSync()
@@ -158,11 +154,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   it should "modify value for key created in current transaction" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertResult(Some(25)) {
       (for {
@@ -174,11 +169,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   "TxnVarMap.remove(key)" should "remove value for pre-existing entry" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     tVarMap.remove("baz").commit.unsafeRunSync()
 
@@ -188,11 +182,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   it should "throw an error if key doesn't exist" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertThrows[RuntimeException] {
       tVarMap.remove("foobar").commit.unsafeRunSync()
@@ -200,11 +193,10 @@ class TxnVarMapSpec extends AnyFlatSpec {
   }
 
   it should "remove value of entry created in current transaction" in new StmRuntimeFixture {
-    import stm._
-
     val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
-    val tVarMap: TxnVarMap[String, Int] = TxnVarMap.of(baseMap).unsafeRunSync()
+    val tVarMap: TxnVarMap[IO, String, Int] =
+      TxnVarMap.of(baseMap).unsafeRunSync()
 
     assertResult(None) {
       (for {

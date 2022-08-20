@@ -15,13 +15,14 @@
  */
 
 package ai.entrolution
+package bengal.stm.model
 
-import bengal.stm.STM
+private[stm] sealed trait TxnErratum
 
-import cats.effect.IO
-import cats.effect.unsafe.IORuntime
+object TxnErratum {
+  private[stm] case object NoErratum extends TxnErratum
 
-trait StmRuntimeFixture {
-  implicit val runtime: IORuntime = cats.effect.unsafe.IORuntime.global
-  implicit val stm: STM[IO]       = STM.runtime[IO].unsafeRunSync()
+  private[stm] case object TxnRetry extends TxnErratum
+
+  private[stm] case class TxnError(ex: Throwable) extends TxnErratum
 }
