@@ -42,27 +42,25 @@ Example | Description | Type Signature | Notes
 `waitFor(value > 10)` | Semantically blocks a transaction until a condition is met | ```def waitFor(predicate: => Boolean): Txn[Unit]``` | Blocking is only semantic (i.e. not locking up a thread while waiting)<br/><br/>This is implemented via retries that are initiated via variable/map updates. One can specify the `retryMaxWait` to facilitate backstop polling for these retries, but this is _not_ recommended (i.e. indicates side-effects are impacting predicate)
 
 ### Example
+Note in the below that the [better-monadic-for](https://github.com/oleg-py/better-monadic-for) is used to expose the runtime as an implicit in the monadic computation. This is avoids the use of `unsafeRunSync` to expose the runtime instance, while not requiring the runtime to be explicitly passed to the sub-programs.
 
 ```scala
 import bengal.stm.STM
 import bengal.stm.model._
 import bengal.stm.syntax.all._
 
-import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, IOApp}
 
 import scala.concurrent.duration._
 
 object Main extends IOApp.Simple {
 
-  implicit val stm: STM[IO] = STM.runtime[IO].unsafeRunSync()
-
   def run: IO[Unit] = {
     def createAccount(
                        name: String,
                        initialBalance: Int,
                        accounts: TxnVarMap[IO, String, Int]
-                     ): IO[Unit] =
+                     )(implicit stm: STM[IO]): IO[Unit] =
       accounts.set(name, initialBalance).commit
 
     def transferFunds(
@@ -71,7 +69,7 @@ object Main extends IOApp.Simple {
                        to: String,
                        from: String,
                        amount: Int
-                     ): IO[Unit] =
+                     )(implicit stm: STM[IO]): IO[Unit] =
       (for {
         balance    <- accounts.get(from)
         isBankOpen <- bankOpen.get
@@ -81,14 +79,18 @@ object Main extends IOApp.Simple {
         _          <- accounts.modify(to, _ + amount)
       } yield ()).commit
 
-    def openBank(bankOpen: TxnVar[IO, Boolean]): IO[Unit] =
+    def openBank(
+                  bankOpen: TxnVar[IO, Boolean]
+                )(implicit stm: STM[IO]): IO[Unit] =
       for {
         _ <- IO.sleep(1000.millis)
         _ <- IO(println("Bank Open!"))
         _ <- bankOpen.set(true).commit
       } yield ()
 
-    def printAccounts(accounts: TxnVarMap[IO, String, Int]): IO[Unit] =
+    def printAccounts(
+                       accounts: TxnVarMap[IO, String, Int]
+                     )(implicit stm: STM[IO]): IO[Unit] =
       for {
         accounts <- accounts.get.commit
         _ <- IO {
@@ -99,14 +101,15 @@ object Main extends IOApp.Simple {
       } yield ()
 
     for {
-      bankOpen <- TxnVar.of(false)
-      accounts <- TxnVarMap.of[IO, String, Int](Map())
-      _        <- createAccount("David", 100, accounts)
-      _        <- createAccount("Sasha", 0, accounts)
-      _        <- printAccounts(accounts)
-      _        <- openBank(bankOpen).start
-      _        <- transferFunds(accounts, bankOpen, "Sasha", "David", 100)
-      _        <- printAccounts(accounts)
+      implicit0(stm: STM[IO]) <- STM.runtime[IO]
+      bankOpen                <- TxnVar.of(false)
+      accounts                <- TxnVarMap.of[IO, String, Int](Map())
+      _                       <- createAccount("David", 100, accounts)
+      _                       <- createAccount("Sasha", 0, accounts)
+      _                       <- printAccounts(accounts)
+      _                       <- openBank(bankOpen).start
+      _                       <- transferFunds(accounts, bankOpen, "Sasha", "David", 100)
+      _                       <- printAccounts(accounts)
     } yield ()
   }
 }

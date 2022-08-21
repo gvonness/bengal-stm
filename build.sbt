@@ -1,10 +1,9 @@
 ThisBuild / baseVersion := "0.5.0"
+
 ThisBuild / organization := "ai.entrolution"
 ThisBuild / organizationName := "Greg von Nessi"
 ThisBuild / publishGithubUser := "gvonness"
 ThisBuild / publishFullName := "Greg von Nessi"
-ThisBuild / startYear := Some(2020)
-ThisBuild / endYear := Some(2022)
 
 ThisBuild / homepage := Some(url("https://github.com/gvonness/bengal-stm"))
 ThisBuild / scmInfo := Some(
@@ -13,37 +12,42 @@ ThisBuild / scmInfo := Some(
   )
 )
 
+ThisBuild / startYear := Some(2020)
+ThisBuild / endYear := Some(2022)
+
 ThisBuild / spiewakCiReleaseSnapshots := false
 ThisBuild / spiewakMainBranches := Seq("main")
 
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
 
-name := "bengal-stm"
-
-scalaVersion := "2.13.8"
-ThisBuild / crossScalaVersions := Seq("2.13.8")
-
+Global / idePackagePrefix := Some("ai.entrolution")
 Global / excludeLintKeys += idePackagePrefix
 
-libraryDependencies += "org.typelevel" %% "cats-free"                     % "2.8.0"
-libraryDependencies += "org.typelevel" %% "cats-effect"                   % "3.3.14"
-libraryDependencies += "org.typelevel" %% "cats-effect-testing-scalatest" % "1.4.0" % "test"
-
-libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.12" % "test"
-idePackagePrefix := Some("ai.entrolution")
-
-scalacOptions ++= Seq(
-  "-deprecation",
-  "-feature",
-  "-unchecked",
-  "-encoding",
-  "UTF-8",
-  "-Xlint:_",
-  "-Ywarn-unused:-implicits",
-  "-Ywarn-value-discard",
-  "-Ywarn-dead-code"
+lazy val commonSettings = Seq(
+  scalaVersion := DependencyVersions.scala2p13Version,
+  scalacOptions ++= Seq(
+    "-deprecation",
+    "-feature",
+    "-unchecked",
+    "-encoding",
+    "UTF-8",
+    "-Xlint:_",
+    "-Ywarn-unused:-implicits",
+    "-Ywarn-value-discard",
+    "-Ywarn-dead-code"
+  )
 )
 
-enablePlugins(SonatypeCiReleasePlugin)
-addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1" % "test")
+lazy val bengalStm = (project in file("."))
+  .enablePlugins(SonatypeCiReleasePlugin)
+  .settings(
+    commonSettings,
+    name := "bengal-stm",
+    libraryDependencies ++= Dependencies.bengalStm,
+    crossScalaVersions := Seq(
+      DependencyVersions.scala2p13Version,
+      DependencyVersions.scala2p12Version,
+      DependencyVersions.scala2p11Version
+    )
+  )
