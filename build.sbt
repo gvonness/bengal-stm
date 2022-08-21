@@ -24,8 +24,7 @@ ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
 ThisBuild / scalaVersion := DependencyVersions.scala2p13Version
 ThisBuild / crossScalaVersions := Seq(
   DependencyVersions.scala2p13Version,
-  DependencyVersions.scala2p12Version,
-  DependencyVersions.scala2p11Version
+  DependencyVersions.scala2p12Version
 )
 
 Global / idePackagePrefix := Some("ai.entrolution")
@@ -54,7 +53,6 @@ lazy val bengalStm = (project in file("."))
     libraryDependencies ++= Dependencies.bengalStm,
     crossScalaVersions := Seq(
       DependencyVersions.scala2p13Version,
-      DependencyVersions.scala2p12Version,
-      DependencyVersions.scala2p11Version
+      DependencyVersions.scala2p12Version
     )
   )
