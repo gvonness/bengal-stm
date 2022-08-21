@@ -51,5 +51,10 @@ lazy val bengalStm = (project in file("."))
   .settings(
     commonSettings,
     name := "bengal-stm",
-    libraryDependencies ++= Dependencies.bengalStm
+    libraryDependencies ++= Dependencies.bengalStm,
+    crossScalaVersions := Seq(
+      DependencyVersions.scala2p13Version,
+      DependencyVersions.scala2p12Version,
+      DependencyVersions.scala2p11Version
+    )
   )
