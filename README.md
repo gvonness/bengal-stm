@@ -42,7 +42,7 @@ Example | Description | Type Signature | Notes
 `waitFor(value > 10)` | Semantically blocks a transaction until a condition is met | ```def waitFor(predicate: => Boolean): Txn[Unit]``` | Blocking is only semantic (i.e. not locking up a thread while waiting)<br/><br/>This is implemented via retries that are initiated via variable/map updates. One can specify the `retryMaxWait` to facilitate backstop polling for these retries, but this is _not_ recommended (i.e. indicates side-effects are impacting predicate)
 
 ### Example
-Note in the below that the [better-monadic-for](https://github.com/oleg-py/better-monadic-for) is used to expose the runtime as an implicit in the monadic computation. This is avoids the use of `unsafeRunSync` to expose the runtime instance, while not requiring the runtime to be explicitly passed to the sub-programs.
+Note in the below that the [better-monadic-for](https://github.com/oleg-py/better-monadic-for) compiler plugin is used to expose the STM runtime as an implicit in the monadic computation. This is avoids the use of `unsafeRunSync` to expose the runtime instance, while not requiring the runtime to be explicitly passed to the sub-programs.
 
 ```scala
 import bengal.stm.STM
@@ -138,11 +138,6 @@ Also, while APIs are quite similar, there are some differences between Bengal an
 I wanted `waitFor` to have a clear semantic delineation from an `if` statement in the monadic construction. While there is arguably a missed opportunity to define a canonical Semigroup via such a bypass, I have opted for a simpler API (for the time being).
 
 In addition to this, Bengal short-circuits the rest of the monadic evaluation when encountering a failed `waitFor` predicate. This performance optimisation is not possible if we need to search the computation spec for a `waitFor` bypass.
-
-### Why don't the API methods appear in my IDE's auto-complete?
-This is a known issue with using implicit classes to extend class methods. 
-
-The choice to use implicit classes to present the public interfaces was a tactical one in that could be applied consistently to both transactions and transactional variables consistently while affording a clean separation of public and internal interfaces within the library.
 
 ### Why 'Bengal'?
 Bengals are a very playful and active cat breed. I figured the name worked for something built on Cats ;).
