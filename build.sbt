@@ -21,6 +21,13 @@ ThisBuild / spiewakMainBranches := Seq("main")
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
 
+ThisBuild / scalaVersion := DependencyVersions.scala2p13Version
+ThisBuild / crossScalaVersions := Seq(
+  DependencyVersions.scala2p13Version,
+  DependencyVersions.scala2p12Version,
+  DependencyVersions.scala2p11Version
+)
+
 Global / idePackagePrefix := Some("ai.entrolution")
 Global / excludeLintKeys += idePackagePrefix
 
@@ -44,10 +51,5 @@ lazy val bengalStm = (project in file("."))
   .settings(
     commonSettings,
     name := "bengal-stm",
-    libraryDependencies ++= Dependencies.bengalStm,
-    crossScalaVersions := Seq(
-      DependencyVersions.scala2p13Version,
-      DependencyVersions.scala2p12Version,
-      DependencyVersions.scala2p11Version
-    )
+    libraryDependencies ++= Dependencies.bengalStm
   )
