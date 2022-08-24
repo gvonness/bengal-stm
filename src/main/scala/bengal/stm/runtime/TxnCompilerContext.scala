@@ -26,8 +26,6 @@ import cats.data.StateT
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
-import scala.util.{Failure, Success, Try}
-
 private[stm] abstract class TxnCompilerContext[F[_]: Async]
     extends TxnLogContext[F] {
   this: TxnAdtContext[F] =>
@@ -53,13 +51,10 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                 noOp[IdClosure].map(_.asInstanceOf[V])
               case TxnDelay(thunk) =>
                 StateT[F, IdClosure, V] { s =>
-                  Async[F].delay {
-                    Try(thunk()) match {
-                      case Success(materializedValue) =>
-                        (s, materializedValue)
-                      case _ =>
-                        throw StaticAnalysisShortCircuitException(s)
-                    }
+                  thunk.map { materializedValue =>
+                    (s, materializedValue)
+                  }.handleErrorWith { _ =>
+                    Async[F].raiseError(StaticAnalysisShortCircuitException(s))
                   }
                 }
               case TxnPure(value) =>
@@ -79,32 +74,29 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                 }
               case adt: TxnGetVarMapValue[_, _] =>
                 StateT[F, IdClosure, V] { s =>
-                  Try(adt.key()) match {
-                    case Success(materializedKey) =>
-                      for {
-                        oTxnVar <-
-                          adt.txnVarMap.getTxnVar(materializedKey)
-                        value <-
-                          oTxnVar
-                            .map(_.get.map(Some(_)))
-                            .getOrElse(Async[F].pure(None))
-                        oARId <-
-                          adt.txnVarMap.getRuntimeActualisedId(
-                            materializedKey
-                          )
-                        eRId =
-                          adt.txnVarMap.getRuntimeExistentialId(
-                            materializedKey
-                          )
-                      } yield oARId
-                        .map(id =>
-                          (s.addReadId(id).addReadId(eRId),
-                           value.asInstanceOf[V]
-                          )
+                  adt.key.flatMap { materializedKey =>
+                    for {
+                      oTxnVar <-
+                        adt.txnVarMap.getTxnVar(materializedKey)
+                      value <-
+                        oTxnVar
+                          .map(_.get.map(Some(_)))
+                          .getOrElse(Async[F].pure(None))
+                      oARId <-
+                        adt.txnVarMap.getRuntimeActualisedId(
+                          materializedKey
                         )
-                        .getOrElse((s.addReadId(eRId), value.asInstanceOf[V]))
-                    case _ =>
-                      throw StaticAnalysisShortCircuitException(s)
+                      eRId =
+                        adt.txnVarMap.getRuntimeExistentialId(
+                          materializedKey
+                        )
+                    } yield oARId
+                      .map(id =>
+                        (s.addReadId(id).addReadId(eRId), value.asInstanceOf[V])
+                      )
+                      .getOrElse((s.addReadId(eRId), value.asInstanceOf[V]))
+                  }.handleErrorWith { _ =>
+                    Async[F].raiseError(StaticAnalysisShortCircuitException(s))
                   }
                 }
               case adt: TxnSetVar[_] =>
@@ -121,74 +113,73 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                 }
               case adt: TxnSetVarMapValue[_, _] =>
                 StateT[F, IdClosure, Unit] { s =>
-                  Try(adt.key()) match {
-                    case Success(materializedKey) =>
-                      for {
-                        oARId <-
-                          adt.txnVarMap.getRuntimeActualisedId(
-                            materializedKey
-                          )
-                        eRId =
-                          adt.txnVarMap.getRuntimeExistentialId(
-                            materializedKey
-                          )
-                      } yield oARId
-                        .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                        .getOrElse((s.addWriteId(eRId), ()))
-                    case _ =>
-                      Async[F].delay((s, ()))
+                  adt.key.flatMap { materializedKey =>
+                    for {
+                      oARId <-
+                        adt.txnVarMap.getRuntimeActualisedId(
+                          materializedKey
+                        )
+                      eRId =
+                        adt.txnVarMap.getRuntimeExistentialId(
+                          materializedKey
+                        )
+                    } yield oARId
+                      .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
+                      .getOrElse((s.addWriteId(eRId), ()))
+                  }.handleErrorWith { _ =>
+                    Async[F].delay((s, ()))
                   }
                 }.map(_.asInstanceOf[V])
               case adt: TxnModifyVarMapValue[_, _] =>
                 StateT[F, IdClosure, Unit] { s =>
-                  Try(adt.key()) match {
-                    case Success(materializedKey) =>
-                      for {
-                        oARId <-
-                          adt.txnVarMap.getRuntimeActualisedId(
-                            materializedKey
-                          )
-                        eRId =
-                          adt.txnVarMap.getRuntimeExistentialId(
-                            materializedKey
-                          )
-                      } yield oARId
-                        .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                        .getOrElse((s.addWriteId(eRId), ()))
-                    case _ =>
-                      Async[F].delay((s, ()))
+                  adt.key.flatMap { materializedKey =>
+                    for {
+                      oARId <-
+                        adt.txnVarMap.getRuntimeActualisedId(
+                          materializedKey
+                        )
+                      eRId =
+                        adt.txnVarMap.getRuntimeExistentialId(
+                          materializedKey
+                        )
+                    } yield oARId
+                      .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
+                      .getOrElse((s.addWriteId(eRId), ()))
+                  }.handleErrorWith { _ =>
+                    Async[F].delay((s, ()))
                   }
                 }.map(_.asInstanceOf[V])
               case adt: TxnDeleteVarMapValue[_, _] =>
                 StateT[F, IdClosure, Unit] { s =>
-                  Try(adt.key()) match {
-                    case Success(materializedKey) =>
-                      for {
-                        oARId <-
-                          adt.txnVarMap.getRuntimeActualisedId(
-                            materializedKey
-                          )
-                        eRId =
-                          adt.txnVarMap.getRuntimeExistentialId(
-                            materializedKey
-                          )
-                      } yield oARId
-                        .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                        .getOrElse((s.addWriteId(eRId), ()))
-                    case _ =>
-                      Async[F].delay((s, ()))
+                  adt.key.flatMap { materializedKey =>
+                    for {
+                      oARId <-
+                        adt.txnVarMap.getRuntimeActualisedId(
+                          materializedKey
+                        )
+                      eRId =
+                        adt.txnVarMap.getRuntimeExistentialId(
+                          materializedKey
+                        )
+                    } yield oARId
+                      .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
+                      .getOrElse((s.addWriteId(eRId), ()))
+                  }.handleErrorWith { _ =>
+                    Async[F].delay((s, ()))
                   }
                 }.map(_.asInstanceOf[V])
               case adt: TxnHandleError[_] =>
                 StateT[F, IdClosure, V] { s =>
-                  Try(adt.fa().map(_.asInstanceOf[V])) match {
-                    case Success(materializedF) =>
+                  adt.fa
+                    .map(_.map(_.asInstanceOf[V]))
+                    .flatMap { materializedF =>
                       materializedF
                         .foldMap(staticAnalysisCompiler)
                         .run(s)
-                    case _ =>
+                    }
+                    .handleErrorWith { _ =>
                       Async[F].delay((s, ().asInstanceOf[V]))
-                  }
+                    }
                 }
               case _ =>
                 noOp[IdClosure].map(_.asInstanceOf[V])
@@ -261,23 +252,23 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                 }
               case adt: TxnHandleError[_] =>
                 StateT[F, TxnLog, V] { s =>
-                  Try(adt.fa()) match {
-                    case Success(materializedF) =>
-                      for {
-                        originalResult <-
-                          materializedF.foldMap(txnLogCompiler).run(s)
-                        finalResult <- originalResult._1 match {
-                                         case TxnLogError(ex) =>
-                                           adt
-                                             .f(ex)
-                                             .foldMap(txnLogCompiler)
+                  (for {
+                    materializedF <- adt.fa
+                    originalResult <-
+                      materializedF.foldMap(txnLogCompiler).run(s)
+                    finalResult <- originalResult._1 match {
+                                     case TxnLogError(ex) =>
+                                       adt
+                                         .f(ex)
+                                         .flatMap {
+                                           _.foldMap(txnLogCompiler)
                                              .run(s)
-                                         case _ =>
-                                           Async[F].pure(originalResult)
-                                       }
-                      } yield finalResult
-                    case Failure(exception) =>
-                      s.raiseError(exception).map((_, ().asInstanceOf[V]))
+                                         }
+                                     case _ =>
+                                       Async[F].pure(originalResult)
+                                   }
+                  } yield (finalResult._1, finalResult._2.asInstanceOf[V])).handleErrorWith { ex =>
+                    s.raiseError(ex).map((_, ().asInstanceOf[V]))
                   }
                 }
               case _ =>

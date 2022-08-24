@@ -20,7 +20,6 @@ package bengal.stm
 import bengal.stm.api.internal.TxnApiContext
 import bengal.stm.model._
 import bengal.stm.model.runtime._
-import bengal.stm.runtime.TxnRuntimeContext
 
 import cats.effect.Ref
 import cats.effect.implicits._
@@ -30,10 +29,7 @@ import cats.implicits._
 
 import scala.concurrent.duration.{FiniteDuration, NANOSECONDS}
 
-trait STM[F[_]]
-    extends TxnRuntimeContext[F]
-    with TxnApiContext[F]
-    with TxnAdtContext[F] {
+abstract class STM[F[_]: Async] extends TxnApiContext[F] with TxnAdtContext[F] {
 
   def allocateTxnVar[V](value: V): F[TxnVar[F, V]]
   def allocateTxnVarMap[K, V](valueMap: Map[K, V]): F[TxnVarMap[F, K, V]]
