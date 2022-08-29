@@ -32,7 +32,7 @@ class TxnVarMapSpec
     with AsyncIOSpec
     with Matchers
     with EitherValues {
-  val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
+  val baseMap: Map[String, Int] = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
   "TxnVarMap.get" - {
     "return the value of a transactional map" in {

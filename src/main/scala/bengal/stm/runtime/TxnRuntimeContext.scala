@@ -29,9 +29,11 @@ import cats.syntax.all._
 import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 import scala.concurrent.duration.FiniteDuration
 
-private[stm] abstract class TxnRuntimeContext[F[_]: Async]
-    extends TxnCompilerContext[F] {
-  this: TxnAdtContext[F] =>
+private[stm] trait TxnRuntimeContext[F[_]] {
+  this: AsyncImplicits[F]
+    with TxnCompilerContext[F]
+    with TxnLogContext[F]
+    with TxnAdtContext[F] =>
 
   private[stm] val txnIdGen: Ref[F, TxnId]
   private[stm] val txnVarIdGen: Ref[F, TxnVarId]

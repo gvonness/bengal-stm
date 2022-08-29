@@ -26,9 +26,8 @@ import cats.data.StateT
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
-private[stm] abstract class TxnCompilerContext[F[_]: Async]
-    extends TxnLogContext[F] {
-  this: TxnAdtContext[F] =>
+private[stm] trait TxnCompilerContext[F[_]] {
+  this: AsyncImplicits[F] with TxnLogContext[F] with TxnAdtContext[F] =>
 
   private[stm] type IdClosureStore[T] = StateT[F, IdClosure, T]
   private[stm] type TxnLogStore[T]    = StateT[F, TxnLog, T]
@@ -267,7 +266,9 @@ private[stm] abstract class TxnCompilerContext[F[_]: Async]
                                      case _ =>
                                        Async[F].pure(originalResult)
                                    }
-                  } yield (finalResult._1, finalResult._2.asInstanceOf[V])).handleErrorWith { ex =>
+                  } yield (finalResult._1,
+                           finalResult._2.asInstanceOf[V]
+                  )).handleErrorWith { ex =>
                     s.raiseError(ex).map((_, ().asInstanceOf[V]))
                   }
                 }

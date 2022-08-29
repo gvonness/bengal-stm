@@ -17,11 +17,6 @@
 package ai.entrolution
 package bengal.stm.model
 
-private[stm] sealed trait TxnErratum
+import cats.effect.kernel.Async
 
-object TxnErratum {
-
-  private[stm] case object TxnRetry extends TxnErratum
-
-  private[stm] case class TxnError(ex: Throwable) extends TxnErratum
-}
+abstract class AsyncImplicits[F[_]](protected implicit val asyncF: Async[F])

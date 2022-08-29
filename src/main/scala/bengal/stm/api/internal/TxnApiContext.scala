@@ -26,9 +26,8 @@ import cats.free.Free
 
 import scala.util.{Failure, Success, Try}
 
-private[stm] abstract class TxnApiContext[F[_]: Async]
-    extends TxnRuntimeContext[F] {
-  this: TxnAdtContext[F] =>
+private[stm] trait TxnApiContext[F[_]] {
+  this: AsyncImplicits[F] with TxnRuntimeContext[F] with TxnAdtContext[F] =>
 
   private def liftSuccess[V](txnAdt: TxnAdt[V]): Txn[V] =
     Free.liftF[TxnOrErr, V](Right(txnAdt))
@@ -174,6 +173,7 @@ private[stm] abstract class TxnApiContext[F[_]: Async]
                            txnVarMap
       )
     )
+
   private[stm] def modifyTxnVarMapValueF[K, V](
       key: => K,
       f: V => F[V],

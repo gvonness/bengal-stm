@@ -28,7 +28,8 @@ import cats.syntax.all._
 
 import scala.annotation.nowarn
 
-private[stm] abstract class TxnLogContext[F[_]: Async] {
+private[stm] trait TxnLogContext[F[_]] {
+  this: AsyncImplicits[F] =>
 
   private[stm] sealed trait TxnLogEntry[V] {
     private[stm] def get: V

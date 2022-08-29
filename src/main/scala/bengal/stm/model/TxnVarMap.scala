@@ -125,7 +125,7 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
            }
     } yield ()
 
-  override private[stm] def registerRetry(
+  private[stm] override def registerRetry(
       signal: Deferred[F, Unit]
   ): F[Unit] =
     withLock(internalSignalLock)(txnRetrySignals.update(_ + signal))
