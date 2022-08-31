@@ -624,7 +624,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         case _ =>
                           (TxnLogError {
                              new RuntimeException(
-                               s"Tried to read non-existent key $key in transactional map"
+                               s"Tried to read non-existent key $materializedKey in transactional map"
                              )
                            },
                            None
@@ -882,7 +882,7 @@ private[stm] trait TxnLogContext[F[_]] {
                       Async[F].delay {
                         TxnLogError(
                           new RuntimeException(
-                            s"Key $key not found for modification"
+                            s"Key $materializedKey not found for modification"
                           )
                         )
                       }
@@ -921,7 +921,7 @@ private[stm] trait TxnLogContext[F[_]] {
                           Async[F].delay {
                             TxnLogError(
                               new RuntimeException(
-                                s"Key $key not found for modification"
+                                s"Key $materializedKey not found for modification"
                               )
                             )
                           }
@@ -930,7 +930,7 @@ private[stm] trait TxnLogContext[F[_]] {
                       Async[F].delay {
                         TxnLogError(
                           new RuntimeException(
-                            s"Key $key not found for modification"
+                            s"Key $materializedKey not found for modification"
                           )
                         )
                       }
@@ -986,7 +986,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         case _ => // Throw error to be consistent with read behaviour
                           TxnLogError {
                             new RuntimeException(
-                              s"Tried to remove non-existent key $key in transactional map"
+                              s"Tried to remove non-existent key $materializedKey in transactional map"
                             )
                           }
                       }
