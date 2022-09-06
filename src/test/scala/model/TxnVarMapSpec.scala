@@ -32,7 +32,7 @@ class TxnVarMapSpec
     with AsyncIOSpec
     with Matchers
     with EitherValues {
-  val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
+  val baseMap: Map[String, Int] = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
   "TxnVarMap.get" - {
     "return the value of a transactional map" in {
@@ -82,12 +82,12 @@ class TxnVarMapSpec
       } yield result).asserting(_ shouldBe Some(42))
     }
 
-    "throw an error if key isn't present" in {
+    "return None if key isn't present" in {
       (for {
         implicit0(stm: STM[IO]) <- STM.runtime[IO]
         tVarMap                 <- TxnVarMap.of(baseMap)
-        result                  <- tVarMap.get("foobar").commit.attempt
-      } yield result).asserting(_.left.value shouldBe a[RuntimeException])
+        result                  <- tVarMap.get("foobar").commit
+      } yield result).asserting(_ shouldBe None)
     }
 
     "return None if the key is deleted in the current transaction" in {

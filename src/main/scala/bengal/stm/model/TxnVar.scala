@@ -20,7 +20,6 @@ package bengal.stm.model
 import bengal.stm.STM
 import bengal.stm.model.runtime._
 
-import cats.effect.implicits._
 import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
 import cats.effect.{Deferred, Ref}
@@ -33,10 +32,10 @@ case class TxnVar[F[_]: Async, T](
     private[stm] val txnRetrySignals: TxnSignals[F]
 ) extends TxnStateEntity[F, T] {
 
-  private def completeRetrySignals: F[Unit] =
+  private[stm] def completeRetrySignals: F[Unit] =
     for {
       signals <- txnRetrySignals.getAndSet(Set())
-      _       <- signals.toList.parTraverse(_.complete(()))
+      _       <- signals.toList.traverse(_.complete(()))
     } yield ()
 
   private[stm] lazy val get: F[T] =

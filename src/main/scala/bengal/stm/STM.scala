@@ -20,18 +20,21 @@ package bengal.stm
 import bengal.stm.api.internal.TxnApiContext
 import bengal.stm.model._
 import bengal.stm.model.runtime._
-import bengal.stm.runtime.TxnRuntimeContext
+import bengal.stm.runtime.{TxnCompilerContext, TxnLogContext, TxnRuntimeContext}
 
 import cats.effect.Ref
-import cats.effect.implicits._
+import cats.effect.implicits.genSpawnOps
 import cats.effect.kernel.{Async, Deferred}
 import cats.effect.std.Semaphore
 import cats.implicits._
 
 import scala.concurrent.duration.{FiniteDuration, NANOSECONDS}
 
-trait STM[F[_]]
-    extends TxnRuntimeContext[F]
+abstract class STM[F[_]: Async]
+    extends AsyncImplicits[F]
+    with TxnRuntimeContext[F]
+    with TxnCompilerContext[F]
+    with TxnLogContext[F]
     with TxnApiContext[F]
     with TxnAdtContext[F] {
 
@@ -123,12 +126,12 @@ object STM {
                  }
 
                  override def allocateTxnVar[V](value: V): F[TxnVar[F, V]] =
-                   TxnVar.of(value)(this, Async[F])
+                   TxnVar.of(value)(this, this.asyncF)
 
                  override def allocateTxnVarMap[K, V](
                      valueMap: Map[K, V]
                  ): F[TxnVarMap[F, K, V]] =
-                   TxnVarMap.of(valueMap)(this, Async[F])
+                   TxnVarMap.of(valueMap)(this, this.asyncF)
 
                  override private[stm] def commitTxn[V](txn: Txn[V]): F[V] =
                    txnRuntime.commit(txn)

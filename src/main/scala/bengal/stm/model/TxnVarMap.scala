@@ -20,7 +20,6 @@ package bengal.stm.model
 import bengal.stm.STM
 import bengal.stm.model.runtime._
 
-import cats.effect.implicits._
 import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
 import cats.effect.{Deferred, Ref}
@@ -38,6 +37,12 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
     private[stm] val txnRetrySignals: TxnSignals[F]
 ) extends TxnStateEntity[F, VarIndex[F, K, V]] {
 
+  private def completeRetrySignals: F[Unit] =
+    for {
+      signals <- txnRetrySignals.getAndSet(Set())
+      _       <- signals.toList.traverse(_.complete(()))
+    } yield ()
+
   private def withLock[A](semaphore: Semaphore[F])(
       fa: F[A]
   ): F[A] =
@@ -46,7 +51,7 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
   private[stm] lazy val get: F[Map[K, V]] =
     for {
       txnVarMap <- value.get
-      valueMap <- txnVarMap.toList.parTraverse { kv =>
+      valueMap <- txnVarMap.toList.traverse { kv =>
                     kv._2.get.map(v => kv._1 -> v)
                   }
     } yield valueMap.toMap
@@ -91,7 +96,7 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
       keySet: Set[K]
   ): F[Set[TxnVarId]] =
     for {
-      ids <- keySet.toList.parTraverse(getId)
+      ids <- keySet.toList.traverse(getId)
     } yield ids.flatten.toSet
 
   // Only called when key is known to not exist
@@ -101,6 +106,7 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
       _ <- withLock(internalStructureLock)(
              value.update(_ += (newKey -> newTxnVar))
            )
+      _ <- completeRetrySignals
     } yield ()
 
   private[stm] def addOrUpdate(key: K, newValue: V): F[Unit] =
@@ -108,7 +114,9 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
       txnVarMap <- value.get
       _ <- txnVarMap.get(key) match {
              case Some(tVar) =>
-               withLock(internalStructureLock)(tVar.set(newValue))
+               withLock(internalStructureLock)(
+                 tVar.set(newValue)
+               ) >> completeRetrySignals
              case None =>
                add(key, newValue)
            }
@@ -118,14 +126,18 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
     for {
       txnVarMap <- value.get
       _ <- txnVarMap.get(key) match {
-             case Some(_) =>
-               withLock(internalStructureLock)(value.update(_ -= key))
+             case Some(txnVar) =>
+               for {
+                 _ <- withLock(internalStructureLock)(value.update(_ -= key))
+                 _ <- txnVar.completeRetrySignals
+                 _ <- completeRetrySignals
+               } yield ()
              case None =>
                Async[F].unit
            }
     } yield ()
 
-  override private[stm] def registerRetry(
+  private[stm] override def registerRetry(
       signal: Deferred[F, Unit]
   ): F[Unit] =
     withLock(internalSignalLock)(txnRetrySignals.update(_ + signal))

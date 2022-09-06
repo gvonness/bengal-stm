@@ -21,15 +21,14 @@ import bengal.stm.model._
 import bengal.stm.model.runtime._
 
 import cats.effect.Deferred
-import cats.effect.implicits._
 import cats.effect.kernel.{Async, Resource}
 import cats.effect.std.Semaphore
 import cats.syntax.all._
 
 import scala.annotation.nowarn
-import scala.util.{Failure, Success, Try}
 
-private[stm] abstract class TxnLogContext[F[_]: Async] {
+private[stm] trait TxnLogContext[F[_]] {
+  this: AsyncImplicits[F] =>
 
   private[stm] sealed trait TxnLogEntry[V] {
     private[stm] def get: V
@@ -357,7 +356,7 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
     private[stm] def getVar[V](txnVar: TxnVar[F, V]): F[(TxnLog, V)]
 
     @nowarn
-    private[stm] def delay[V](value: () => V): F[(TxnLog, V)] =
+    private[stm] def delay[V](value: F[V]): F[(TxnLog, V)] =
       Async[F].delay(self, ().asInstanceOf[V])
 
     @nowarn
@@ -366,14 +365,14 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
 
     @nowarn
     private[stm] def setVar[V](
-        newValue: () => V,
+        newValue: F[V],
         txnVar: TxnVar[F, V]
     ): F[TxnLog] =
       Async[F].pure(self)
 
     @nowarn
     private[stm] def getVarMapValue[K, V](
-        key: () => K,
+        key: F[K],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[(TxnLog, Option[V])] =
       Async[F].pure((self, None))
@@ -386,30 +385,30 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
 
     @nowarn
     private[stm] def setVarMap[K, V](
-        newMap: () => Map[K, V],
+        newMap: F[Map[K, V]],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[TxnLog] =
       Async[F].pure(self)
 
     @nowarn
     private[stm] def setVarMapValue[K, V](
-        key: () => K,
-        newValue: () => V,
+        key: F[K],
+        newValue: F[V],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[TxnLog] =
       Async[F].pure(self)
 
     @nowarn
     private[stm] def modifyVarMapValue[K, V](
-        key: () => K,
-        f: V => V,
+        key: F[K],
+        f: V => F[V],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[TxnLog] =
       Async[F].pure(self)
 
     @nowarn
     private[stm] def deleteVarMapValue[K, V](
-        key: () => K,
+        key: F[K],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[TxnLog] =
       Async[F].pure(self)
@@ -438,16 +437,13 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
     import TxnLogValid._
 
     override private[stm] def delay[V](
-        value: () => V
+        value: F[V]
     ): F[(TxnLog, V)] =
-      Async[F].delay {
-        Try(value()) match {
-          case Success(v) =>
-            (this, v)
-          case Failure(exception) =>
-            (TxnLogError(exception), ().asInstanceOf[V])
+      value
+        .map((this.asInstanceOf[TxnLog], _))
+        .handleErrorWith { ex =>
+          Async[F].pure((TxnLogError(ex), ().asInstanceOf[V]))
         }
-      }
 
     override private[stm] def pure[V](value: V): F[(TxnLog, V)] =
       Async[F].pure((this, value))
@@ -472,34 +468,32 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
       }
 
     override private[stm] def setVar[V](
-        newValue: () => V,
+        newValue: F[V],
         txnVar: TxnVar[F, V]
     ): F[TxnLog] =
-      Try(newValue()) match {
-        case Success(materializedValue) =>
-          (log.get(txnVar.runtimeId) match {
-            case Some(entry) =>
-              Async[F].delay(
-                this.copy(
-                  log + (txnVar.runtimeId -> entry
-                    .asInstanceOf[TxnLogEntry[V]]
-                    .set(materializedValue))
-                )
+      newValue.flatMap { materializedValue =>
+        (log.get(txnVar.runtimeId) match {
+          case Some(entry) =>
+            Async[F].delay(
+              this.copy(
+                log + (txnVar.runtimeId -> entry
+                  .asInstanceOf[TxnLogEntry[V]]
+                  .set(materializedValue))
               )
-            case _ =>
-              txnVar.get.map { v =>
-                this.copy(
-                  log + (txnVar.runtimeId -> TxnLogUpdateVarEntry(
-                    v,
-                    materializedValue,
-                    txnVar
-                  ))
-                )
-              }
-          }).map(_.asInstanceOf[TxnLog])
-        case Failure(exception) =>
-          raiseError(exception)
+            )
+          case _ =>
+            txnVar.get.map { v =>
+              this.copy(
+                log + (txnVar.runtimeId -> TxnLogUpdateVarEntry(
+                  v,
+                  materializedValue,
+                  txnVar
+                ))
+              )
+            }
+        }).map(_.asInstanceOf[TxnLog])
       }
+        .handleErrorWith(raiseError)
 
     private def getVarMapValueEntry[K, V](
         key: K,
@@ -557,7 +551,7 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
                              for {
                                oldMap <- txnVarMap.get
                                preTxn <-
-                                 oldMap.keySet.toList.parTraverse { ks =>
+                                 oldMap.keySet.toList.traverse { ks =>
                                    getVarMapValueEntry(ks, txnVarMap)
                                  }
                              } yield preTxn
@@ -565,7 +559,7 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
                              Async[F].pure(List())
                            }
           currentEntries <- extractMap(txnVarMap, log)
-          reads <- currentEntries.keySet.toList.parTraverse { ks =>
+          reads <- currentEntries.keySet.toList.traverse { ks =>
                      getVarMapValueEntry(ks, txnVarMap)
                    }
         } yield (preTxnEntries ::: reads).flatten.toMap
@@ -592,54 +586,48 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
     }
 
     override private[stm] def getVarMapValue[K, V](
-        key: () => K,
+        key: F[K],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[(TxnLog, Option[V])] =
-      Try(key()) match {
-        case Success(materializedKey) =>
-          for {
-            oTxnVar <- txnVarMap.getTxnVar(materializedKey)
-            result <- oTxnVar match {
-                        case Some(txnVar) =>
-                          log.get(txnVar.runtimeId) match {
-                            case Some(entry) =>
-                              Async[F].delay(
-                                (this, entry.get.asInstanceOf[Option[V]])
-                              ) //Noop
-                            case None =>
-                              for {
-                                txnVal <- txnVar.get
-                              } yield (this.copy(
-                                         log + (txnVar.runtimeId -> TxnLogReadOnlyVarMapEntry(
-                                           materializedKey,
-                                           Some(txnVal),
-                                           txnVarMap
-                                         ))
-                                       ),
-                                       Some(txnVal)
-                              )
-                          }
+      (for {
+        materializedKey <- key
+        oTxnVar         <- txnVarMap.getTxnVar(materializedKey)
+        result <- (oTxnVar match {
+                    case Some(txnVar) =>
+                      log.get(txnVar.runtimeId) match {
+                        case Some(entry) =>
+                          Async[F].delay(
+                            (this, entry.get)
+                          ) //Noop
                         case None =>
                           for {
-                            rids <- txnVarMap.getRuntimeId(
-                                      materializedKey
-                                    )
-                          } yield rids.flatMap(log.get) match {
-                            case entry :: Nil =>
-                              (this, entry.get.asInstanceOf[Option[V]]) //Noop
-                            case _ =>
-                              (TxnLogError {
-                                 new RuntimeException(
-                                   s"Tried to read non-existent key $key in transactional map"
-                                 )
-                               },
-                               None
-                              )
-                          }
+                            txnVal <- txnVar.get
+                          } yield (this.copy(
+                                     log + (txnVar.runtimeId -> TxnLogReadOnlyVarMapEntry(
+                                       materializedKey,
+                                       Some(txnVal),
+                                       txnVarMap
+                                     ))
+                                   ),
+                                   Some(txnVal)
+                          )
                       }
-          } yield result
-        case Failure(exception) =>
-          raiseError(exception).map(log => (log, None))
+                    case None =>
+                      for {
+                        rids <- txnVarMap.getRuntimeId(
+                                  materializedKey
+                                )
+                      } yield rids.flatMap(log.get) match {
+                        case entry :: Nil =>
+                          (this, entry.get) //Noop
+                        case _ =>
+                          (this, None)
+                      }
+                  }).map { case (log, value) =>
+                    (log.asInstanceOf[TxnLog], value.asInstanceOf[Option[V]])
+                  }
+      } yield result).handleErrorWith { ex =>
+        raiseError(ex).map(log => (log, None))
       }
 
     private def setVarMapValueEntry[K, V](
@@ -758,245 +746,246 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
       } yield result
 
     override private[stm] def setVarMap[K, V](
-        newMap: () => Map[K, V],
+        newMap: F[Map[K, V]],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[TxnLog] =
-      Try(newMap()) match {
-        case Success(materializedNewMap) =>
-          val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] = for {
-            currentMap <- extractMap(txnVarMap, log)
-            deletions <-
-              (currentMap.keySet -- materializedNewMap.keySet).toList.parTraverse {
-                ks =>
-                  deleteVarMapValueEntry(ks, txnVarMap)
-              }
-            updates <- materializedNewMap.toList.parTraverse { kv =>
-                         setVarMapValueEntry(kv._1, kv._2, txnVarMap)
-                       }
-          } yield (deletions ::: updates).flatten.toMap
+      newMap.flatMap { materializedNewMap =>
+        val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] = for {
+          currentMap <- extractMap(txnVarMap, log)
+          deletions <-
+            (currentMap.keySet -- materializedNewMap.keySet).toList.traverse {
+              ks =>
+                deleteVarMapValueEntry(ks, txnVarMap)
+            }
+          updates <- materializedNewMap.toList.traverse { kv =>
+                       setVarMapValueEntry(kv._1, kv._2, txnVarMap)
+                     }
+        } yield (deletions ::: updates).flatten.toMap
 
-          (log.get(txnVarMap.runtimeId) match {
-            case Some(entry) =>
-              individualEntries.map { entries =>
-                this.copy(
-                  (log ++ entries) + (txnVarMap.runtimeId -> entry
-                    .asInstanceOf[TxnLogEntry[Map[K, V]]]
-                    .set(materializedNewMap))
-                )
-              }
-            case _ =>
-              for {
-                v       <- txnVarMap.get
-                entries <- individualEntries
-              } yield this.copy(
-                (log ++ entries) + (txnVarMap.runtimeId -> TxnLogUpdateVarMapStructureEntry(
-                  v,
-                  materializedNewMap,
-                  txnVarMap
-                ))
+        (log.get(txnVarMap.runtimeId) match {
+          case Some(entry) =>
+            individualEntries.map { entries =>
+              this.copy(
+                (log ++ entries) + (txnVarMap.runtimeId -> entry
+                  .asInstanceOf[TxnLogEntry[Map[K, V]]]
+                  .set(materializedNewMap))
               )
-          }).map(_.asInstanceOf[TxnLog])
-        case Failure(exception) =>
-          raiseError(exception)
+            }
+          case _ =>
+            for {
+              v       <- txnVarMap.get
+              entries <- individualEntries
+            } yield this.copy(
+              (log ++ entries) + (txnVarMap.runtimeId -> TxnLogUpdateVarMapStructureEntry(
+                v,
+                materializedNewMap,
+                txnVarMap
+              ))
+            )
+        }).map(_.asInstanceOf[TxnLog])
       }
+        .handleErrorWith(raiseError)
 
     override private[stm] def setVarMapValue[K, V](
-        key: () => K,
-        newValue: () => V,
+        key: F[K],
+        newValue: F[V],
         txnVarMap: TxnVarMap[F, K, V]
     ): F[TxnLog] =
-      Try((key(), newValue())) match {
-        case Success((materializedKey, materializedNewValue)) =>
-          txnVarMap
-            .getTxnVar(materializedKey)
-            .flatMap {
-              case Some(txnVar) =>
-                log.get(txnVar.runtimeId) match {
-                  case Some(entry) =>
-                    Async[F].delay(
-                      this.copy(
-                        log + (txnVar.runtimeId -> entry
-                          .asInstanceOf[TxnLogEntry[Option[V]]]
-                          .set(Some(materializedNewValue)))
-                      )
-                    )
-                  case None =>
-                    txnVar.get.map { v =>
-                      if (v != materializedNewValue) {
-                        this.copy(
-                          log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
-                            materializedKey,
-                            Some(v),
-                            Some(materializedNewValue),
-                            txnVarMap
-                          ))
-                        )
-                      } else {
-                        this
-                      }
-                    }
-                }
-              case None =>
-                // The txnVar may have been set to be created in this transaction
-                txnVarMap.getRuntimeId(materializedKey).map { rids =>
-                  rids.flatMap(rid => log.get(rid).map((rid, _))) match {
-                    case (rid, entry) :: _ =>
-                      this.copy(
-                        log + (rid -> entry
-                          .asInstanceOf[TxnLogEntry[Option[V]]]
-                          .set(Some(materializedNewValue)))
-                      )
-                    case _ =>
-                      this.copy(
-                        log + (rids.head -> TxnLogUpdateVarMapEntry(
-                          materializedKey,
-                          None,
-                          Some(materializedNewValue),
-                          txnVarMap
-                        ))
-                      )
-                  }
-                }
-            }
-            .map(_.asInstanceOf[TxnLog])
-        case Failure(exception) =>
-          raiseError(exception)
-      }
-
-    override private[stm] def modifyVarMapValue[K, V](
-        key: () => K,
-        f: V => V,
-        txnVarMap: TxnVarMap[F, K, V]
-    ): F[TxnLog] =
-      Try(key()) match {
-        case Success(materializedKey) =>
-          txnVarMap
-            .getTxnVar(materializedKey)
-            .flatMap {
-              case Some(txnVar) =>
-                (log.get(txnVar.runtimeId) match {
-                  case Some(entry) =>
-                    Async[F].delay {
-                      entry.get.asInstanceOf[Option[V]] match {
-                        case Some(v) =>
-                          this.copy(
-                            log + (txnVar.runtimeId -> entry
-                              .asInstanceOf[TxnLogEntry[Option[V]]]
-                              .set(Some(f(v))))
-                          )
-                        case None =>
-                          TxnLogError(
-                            new RuntimeException(
-                              s"Key $key not found for modification"
-                            )
-                          )
-                      }
-                    }
-                  case None =>
-                    txnVar.get.map { v =>
-                      this.copy(
-                        log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
-                          materializedKey,
-                          Some(v),
-                          Some(f(v)),
-                          txnVarMap
-                        ))
-                      )
-                    }
-                }).map(_.asInstanceOf[TxnLog])
-              case None =>
-                // The txnVar may have been set to be created in this transaction
-                txnVarMap
-                  .getRuntimeId(materializedKey)
-                  .map { rids =>
-                    rids.flatMap(rid => log.get(rid).map((rid, _))) match {
-                      case (rid, entry) :: _ =>
-                        val castEntry: TxnLogEntry[Option[V]] =
-                          entry.asInstanceOf[TxnLogEntry[Option[V]]]
-                        castEntry.get match {
-                          case Some(v) =>
-                            this.copy(
-                              log + (rid -> castEntry
-                                .set(Some(f(v))))
+      (for {
+        materializedKey      <- key
+        materializedNewValue <- newValue
+        result <- txnVarMap
+                    .getTxnVar(materializedKey)
+                    .flatMap {
+                      case Some(txnVar) =>
+                        log.get(txnVar.runtimeId) match {
+                          case Some(entry) =>
+                            Async[F].delay(
+                              this.copy(
+                                log + (txnVar.runtimeId -> entry
+                                  .asInstanceOf[TxnLogEntry[Option[V]]]
+                                  .set(Some(materializedNewValue)))
+                              )
                             )
                           case None =>
-                            TxnLogError(
-                              new RuntimeException(
-                                s"Key $key not found for modification"
-                              )
-                            )
-                        }
-                      case _ =>
-                        TxnLogError(
-                          new RuntimeException(
-                            s"Key $key not found for modification"
-                          )
-                        )
-                    }
-                  }
-                  .map(_.asInstanceOf[TxnLog])
-            }
-        case Failure(exception) =>
-          raiseError(exception)
-      }
-
-    override private[stm] def deleteVarMapValue[K, V](
-        key: () => K,
-        txnVarMap: TxnVarMap[F, K, V]
-    ): F[TxnLog] =
-      Try(key()) match {
-        case Success(materializedKey) =>
-          for {
-            oTxnVar <- txnVarMap.getTxnVar(materializedKey)
-            result <- oTxnVar match {
-                        case Some(txnVar) =>
-                          log.get(txnVar.runtimeId) match {
-                            case Some(entry) =>
-                              Async[F].delay(
+                            txnVar.get.map { v =>
+                              if (v != materializedNewValue) {
                                 this.copy(
-                                  log + (txnVar.runtimeId -> entry
-                                    .asInstanceOf[TxnLogEntry[Option[V]]]
-                                    .set(None))
-                                )
-                              )
-                            case None =>
-                              for {
-                                txnVal <- txnVar.get
-                              } yield this.copy(
-                                log + (txnVar.runtimeId ->
-                                  TxnLogUpdateVarMapEntry(materializedKey,
-                                                          Some(txnVal),
-                                                          None,
-                                                          txnVarMap
+                                  log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
+                                    materializedKey,
+                                    Some(v),
+                                    Some(materializedNewValue),
+                                    txnVarMap
                                   ))
-                              )
-                          }
-                        case None =>
-                          for {
-                            rids <- txnVarMap.getRuntimeId(
-                                      materializedKey
-                                    )
-                          } yield rids.flatMap(rid =>
-                            log.get(rid).map((rid, _))
-                          ) match {
+                                )
+                              } else {
+                                this
+                              }
+                            }
+                        }
+                      case None =>
+                        // The txnVar may have been set to be created in this transaction
+                        txnVarMap.getRuntimeId(materializedKey).map { rids =>
+                          rids
+                            .flatMap(rid => log.get(rid).map((rid, _))) match {
                             case (rid, entry) :: _ =>
                               this.copy(
                                 log + (rid -> entry
                                   .asInstanceOf[TxnLogEntry[Option[V]]]
-                                  .set(None))
+                                  .set(Some(materializedNewValue)))
                               )
-                            case _ => // Throw error to be consistent with read behaviour
-                              TxnLogError {
-                                new RuntimeException(
-                                  s"Tried to remove non-existent key $key in transactional map"
-                                )
-                              }
+                            case _ =>
+                              this.copy(
+                                log + (rids.head -> TxnLogUpdateVarMapEntry(
+                                  materializedKey,
+                                  None,
+                                  Some(materializedNewValue),
+                                  txnVarMap
+                                ))
+                              )
+                          }
+                        }
+                    }
+                    .map(_.asInstanceOf[TxnLog])
+      } yield result)
+        .handleErrorWith(raiseError)
+
+    override private[stm] def modifyVarMapValue[K, V](
+        key: F[K],
+        f: V => F[V],
+        txnVarMap: TxnVarMap[F, K, V]
+    ): F[TxnLog] =
+      key.flatMap { materializedKey =>
+        txnVarMap
+          .getTxnVar(materializedKey)
+          .flatMap {
+            case Some(txnVar) =>
+              (log.get(txnVar.runtimeId) match {
+                case Some(entry) =>
+                  entry.get.asInstanceOf[Option[V]] match {
+                    case Some(v) =>
+                      f(v).map { innerResult =>
+                        this.copy(
+                          log + (txnVar.runtimeId -> entry
+                            .asInstanceOf[TxnLogEntry[Option[V]]]
+                            .set(Some(innerResult)))
+                        )
+                      }
+                    case None =>
+                      Async[F].delay {
+                        TxnLogError(
+                          new RuntimeException(
+                            s"Key $materializedKey not found for modification"
+                          )
+                        )
+                      }
+                  }
+                case None =>
+                  for {
+                    v           <- txnVar.get
+                    innerResult <- f(v)
+                  } yield this.copy(
+                    log + (txnVar.runtimeId -> TxnLogUpdateVarMapEntry(
+                      materializedKey,
+                      Some(v),
+                      Some(innerResult),
+                      txnVarMap
+                    ))
+                  )
+              }).map(_.asInstanceOf[TxnLog])
+            case None =>
+              // The txnVar may have been set to be created in this transaction
+              txnVarMap
+                .getRuntimeId(materializedKey)
+                .flatMap { rids =>
+                  (rids.flatMap(rid => log.get(rid).map((rid, _))) match {
+                    case (rid, entry) :: _ =>
+                      val castEntry: TxnLogEntry[Option[V]] =
+                        entry.asInstanceOf[TxnLogEntry[Option[V]]]
+                      castEntry.get match {
+                        case Some(v) =>
+                          f(v).map { innerResult =>
+                            this.copy(
+                              log + (rid -> castEntry
+                                .set(Some(innerResult)))
+                            )
+                          }
+                        case None =>
+                          Async[F].delay {
+                            TxnLogError(
+                              new RuntimeException(
+                                s"Key $materializedKey not found for modification"
+                              )
+                            )
                           }
                       }
-          } yield result
-        case Failure(exception) =>
-          raiseError(exception)
-      }
+                    case _ =>
+                      Async[F].delay {
+                        TxnLogError(
+                          new RuntimeException(
+                            s"Key $materializedKey not found for modification"
+                          )
+                        )
+                      }
+                  }).map(_.asInstanceOf[TxnLog])
+                }
+          }
+      }.handleErrorWith(raiseError)
+
+    override private[stm] def deleteVarMapValue[K, V](
+        key: F[K],
+        txnVarMap: TxnVarMap[F, K, V]
+    ): F[TxnLog] =
+      (for {
+        materializedKey <- key
+        oTxnVar         <- txnVarMap.getTxnVar(materializedKey)
+        result <- oTxnVar match {
+                    case Some(txnVar) =>
+                      log.get(txnVar.runtimeId) match {
+                        case Some(entry) =>
+                          Async[F].delay(
+                            this.copy(
+                              log + (txnVar.runtimeId -> entry
+                                .asInstanceOf[TxnLogEntry[Option[V]]]
+                                .set(None))
+                            )
+                          )
+                        case None =>
+                          for {
+                            txnVal <- txnVar.get
+                          } yield this.copy(
+                            log + (txnVar.runtimeId ->
+                              TxnLogUpdateVarMapEntry(materializedKey,
+                                                      Some(txnVal),
+                                                      None,
+                                                      txnVarMap
+                              ))
+                          )
+                      }
+                    case None =>
+                      for {
+                        rids <- txnVarMap.getRuntimeId(
+                                  materializedKey
+                                )
+                      } yield rids.flatMap(rid =>
+                        log.get(rid).map((rid, _))
+                      ) match {
+                        case (rid, entry) :: _ =>
+                          this.copy(
+                            log + (rid -> entry
+                              .asInstanceOf[TxnLogEntry[Option[V]]]
+                              .set(None))
+                          )
+                        case _ => // Throw error to be consistent with read behaviour
+                          TxnLogError {
+                            new RuntimeException(
+                              s"Tried to remove non-existent key $materializedKey in transactional map"
+                            )
+                          }
+                      }
+                  }
+      } yield result.asInstanceOf[TxnLog])
+        .handleErrorWith(raiseError)
 
     override private[stm] def raiseError(ex: Throwable): F[TxnLog] =
       Async[F].delay(TxnLogError(ex))
@@ -1029,13 +1018,13 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
       }
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      log.values.toList.parTraverse { entry =>
+      log.values.toList.traverse { entry =>
         entry.idClosure
       }.map(_.reduce(_ mergeWith _))
 
     override private[stm] def withLock[A](fa: F[A]): F[A] =
       for {
-        locks <- log.values.toList.parTraverse(_.lock)
+        locks <- log.values.toList.traverse(_.lock)
         result <-
           locks.toSet.flatten
             .foldLeft(Resource.eval(Async[F].unit))((i, j) => i >> j.permit)
@@ -1043,7 +1032,7 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
       } yield result
 
     override private[stm] lazy val commit: F[Unit] =
-      log.values.toList.parTraverse(_.commit).void
+      log.values.toList.traverse(_.commit).void
 
     override private[stm] lazy val getRetrySignal
         : F[Option[Deferred[F, Unit]]] =
@@ -1098,8 +1087,8 @@ private[stm] abstract class TxnLogContext[F[_]: Async] {
       for {
         retrySignal <- Deferred[F, Unit]
         registerRetries <-
-          validLog.log.values.toList.parTraverse(_.getRegisterRetry)
-        _ <- registerRetries.parTraverse(rr => rr(retrySignal))
+          validLog.log.values.toList.traverse(_.getRegisterRetry)
+        _ <- registerRetries.traverse(rr => rr(retrySignal))
       } yield Some(retrySignal)
 
     override private[stm] lazy val scheduleRetry =

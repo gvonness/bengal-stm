@@ -30,8 +30,14 @@ package object all {
     def set(newValue: => V): Txn[Unit] =
       STM[F].setTxnVar(newValue, txnVar)
 
+    def setF(newValue: F[V]): Txn[Unit] =
+      STM[F].setTxnVarF(newValue, txnVar)
+
     def modify(f: V => V): Txn[Unit] =
       STM[F].modifyTxnVar(f, txnVar)
+
+    def modifyF(f: V => F[V]): Txn[Unit] =
+      STM[F].modifyTxnVarF(f, txnVar)
   }
 
   implicit class TxnVarMapOps[F[_]: STM, K, V](txnVarMap: TxnVarMap[F, K, V]) {
@@ -42,8 +48,14 @@ package object all {
     def set(newValueMap: => Map[K, V]): Txn[Unit] =
       STM[F].setTxnVarMap(newValueMap, txnVarMap)
 
+    def set(newValueMap: F[Map[K, V]]): Txn[Unit] =
+      STM[F].setTxnVarMapF(newValueMap, txnVarMap)
+
     def modify(f: Map[K, V] => Map[K, V]): Txn[Unit] =
       STM[F].modifyTxnVarMap(f, txnVarMap)
+
+    def modifyF(f: Map[K, V] => F[Map[K, V]]): Txn[Unit] =
+      STM[F].modifyTxnVarMapF(f, txnVarMap)
 
     def get(key: => K): Txn[Option[V]] =
       STM[F].getTxnVarMapValue(key, txnVarMap)
@@ -51,8 +63,14 @@ package object all {
     def set(key: => K, newValue: => V): Txn[Unit] =
       STM[F].setTxnVarMapValue(key, newValue, txnVarMap)
 
+    def setF(key: => K, newValue: F[V]): Txn[Unit] =
+      STM[F].setTxnVarMapValueF(key, newValue, txnVarMap)
+
     def modify(key: => K, f: V => V): Txn[Unit] =
       STM[F].modifyTxnVarMapValue(key, f, txnVarMap)
+
+    def modifyF(key: => K, f: V => F[V]): Txn[Unit] =
+      STM[F].modifyTxnVarMapValueF(key, f, txnVarMap)
 
     def remove(key: => K): Txn[Unit] =
       STM[F].removeTxnVarMapValue(key, txnVarMap)
@@ -65,5 +83,8 @@ package object all {
 
     def handleErrorWith(f: Throwable => Txn[V]): Txn[V] =
       STM[F].handleErrorWithInternal(txn)(f)
+
+    def handleErrorWithF(f: Throwable => F[Txn[V]]): Txn[V] =
+      STM[F].handleErrorWithInternalF(txn)(f)
   }
 }
