@@ -21,7 +21,6 @@ import bengal.stm.model._
 import bengal.stm.model.runtime._
 
 import cats.effect.Deferred
-import cats.effect.implicits._
 import cats.effect.kernel.{Async, Resource}
 import cats.effect.std.Semaphore
 import cats.syntax.all._
@@ -552,7 +551,7 @@ private[stm] trait TxnLogContext[F[_]] {
                              for {
                                oldMap <- txnVarMap.get
                                preTxn <-
-                                 oldMap.keySet.toList.parTraverse { ks =>
+                                 oldMap.keySet.toList.traverse { ks =>
                                    getVarMapValueEntry(ks, txnVarMap)
                                  }
                              } yield preTxn
@@ -560,7 +559,7 @@ private[stm] trait TxnLogContext[F[_]] {
                              Async[F].pure(List())
                            }
           currentEntries <- extractMap(txnVarMap, log)
-          reads <- currentEntries.keySet.toList.parTraverse { ks =>
+          reads <- currentEntries.keySet.toList.traverse { ks =>
                      getVarMapValueEntry(ks, txnVarMap)
                    }
         } yield (preTxnEntries ::: reads).flatten.toMap
@@ -622,13 +621,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         case entry :: Nil =>
                           (this, entry.get) //Noop
                         case _ =>
-                          (TxnLogError {
-                             new RuntimeException(
-                               s"Tried to read non-existent key $materializedKey in transactional map"
-                             )
-                           },
-                           None
-                          )
+                          (this, None)
                       }
                   }).map { case (log, value) =>
                     (log.asInstanceOf[TxnLog], value.asInstanceOf[Option[V]])
@@ -760,11 +753,11 @@ private[stm] trait TxnLogContext[F[_]] {
         val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] = for {
           currentMap <- extractMap(txnVarMap, log)
           deletions <-
-            (currentMap.keySet -- materializedNewMap.keySet).toList.parTraverse {
+            (currentMap.keySet -- materializedNewMap.keySet).toList.traverse {
               ks =>
                 deleteVarMapValueEntry(ks, txnVarMap)
             }
-          updates <- materializedNewMap.toList.parTraverse { kv =>
+          updates <- materializedNewMap.toList.traverse { kv =>
                        setVarMapValueEntry(kv._1, kv._2, txnVarMap)
                      }
         } yield (deletions ::: updates).flatten.toMap
@@ -1025,13 +1018,13 @@ private[stm] trait TxnLogContext[F[_]] {
       }
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      log.values.toList.parTraverse { entry =>
+      log.values.toList.traverse { entry =>
         entry.idClosure
       }.map(_.reduce(_ mergeWith _))
 
     override private[stm] def withLock[A](fa: F[A]): F[A] =
       for {
-        locks <- log.values.toList.parTraverse(_.lock)
+        locks <- log.values.toList.traverse(_.lock)
         result <-
           locks.toSet.flatten
             .foldLeft(Resource.eval(Async[F].unit))((i, j) => i >> j.permit)
@@ -1039,7 +1032,7 @@ private[stm] trait TxnLogContext[F[_]] {
       } yield result
 
     override private[stm] lazy val commit: F[Unit] =
-      log.values.toList.parTraverse(_.commit).void
+      log.values.toList.traverse(_.commit).void
 
     override private[stm] lazy val getRetrySignal
         : F[Option[Deferred[F, Unit]]] =
@@ -1094,8 +1087,8 @@ private[stm] trait TxnLogContext[F[_]] {
       for {
         retrySignal <- Deferred[F, Unit]
         registerRetries <-
-          validLog.log.values.toList.parTraverse(_.getRegisterRetry)
-        _ <- registerRetries.parTraverse(rr => rr(retrySignal))
+          validLog.log.values.toList.traverse(_.getRegisterRetry)
+        _ <- registerRetries.traverse(rr => rr(retrySignal))
       } yield Some(retrySignal)
 
     override private[stm] lazy val scheduleRetry =

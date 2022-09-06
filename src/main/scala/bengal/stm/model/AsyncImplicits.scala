@@ -19,4 +19,6 @@ package bengal.stm.model
 
 import cats.effect.kernel.Async
 
-abstract class AsyncImplicits[F[_]](protected implicit val asyncF: Async[F])
+private[stm] abstract class AsyncImplicits[F[_]](
+    protected implicit val asyncF: Async[F]
+)
