@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Greg von Nessi
+ * Copyright 2020-2023 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -144,23 +144,29 @@ private[stm] trait TxnRuntimeContext[F[_]] {
     ): F[Unit] =
       if (
         waitingBuffer.nonEmpty &&
-        (currentClosure != finalClosure && cycles <= maxWaitingToProcessInLoop || cycles == 0)
+        ((currentClosure != finalClosure && cycles <= maxWaitingToProcessInLoop) || cycles == 0)
       ) {
-        val newWaiting: F[(IdClosure, List[AnalysedTxn[_]])] = for {
+        val newWaiting: F[(List[AnalysedTxn[_]], IdClosure, Int)] = for {
           aTxn <- Async[F].delay(waitingBuffer.head)
           _    <- Async[F].delay(waitingBuffer.dropInPlace(1))
-          result <- if (aTxn.idClosure.isCompatibleWith(currentClosure)) {
-                      attemptExecution(aTxn) >> Async[F].pure(stillWaiting)
-                    } else {
-                      Async[F].delay(aTxn :: stillWaiting)
-                    }
-        } yield (aTxn.idClosure, result)
+          isCompatible <- Async[F].delay(aTxn.idClosure.isCompatibleWith(currentClosure))
+          (newStillWaiting, newClosure, newCycles) <- if (isCompatible) {
+            for {
+              _ <- attemptExecution(aTxn)
+              newClosure <- Async[F].delay(currentClosure.mergeWith(aTxn.idClosure))
+            } yield (stillWaiting, newClosure, cycles)
+          } else {
+            for {
+              newStillWaiting <- Async[F].delay(aTxn :: stillWaiting)
+            } yield (newStillWaiting, currentClosure, cycles - 1)
+          }
+        } yield (newStillWaiting, newClosure, newCycles)
 
         newWaiting.flatMap { nw =>
-          idClosureAnalysisRecursion(currentClosure.mergeWith(nw._1),
+          idClosureAnalysisRecursion(nw._2,
                                      finalClosure,
-                                     nw._2,
-                                     cycles + 1
+                                     nw._1,
+                                     nw._3 + 1
           )
         }
       } else {

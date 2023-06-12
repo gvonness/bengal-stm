@@ -1,4 +1,4 @@
-ThisBuild / baseVersion := "0.7.0"
+ThisBuild / baseVersion := "0.7.1-SNAPSHOT"
 
 ThisBuild / organization := "ai.entrolution"
 ThisBuild / organizationName := "Greg von Nessi"
@@ -13,7 +13,7 @@ ThisBuild / scmInfo := Some(
 )
 
 ThisBuild / startYear := Some(2020)
-ThisBuild / endYear := Some(2022)
+ThisBuild / endYear := Some(2023)
 
 ThisBuild / spiewakCiReleaseSnapshots := false
 ThisBuild / spiewakMainBranches := Seq("main")
