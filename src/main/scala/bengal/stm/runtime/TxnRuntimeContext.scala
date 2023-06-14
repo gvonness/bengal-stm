@@ -81,7 +81,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
           Async[F].delay(closureTallies.removeIdClosure(idClosure)).start
         _ <- waitingSemaphore.acquire
         _ <- withLock(runningSemaphore)(Async[F].delay(runningMap -= txnId))
-        _ <- if (waitingBuffer.nonEmpty)
+        waitingBufferNonEmpty <- Async[F].delay(waitingBuffer.nonEmpty)
+        _ <- if (waitingBufferNonEmpty)
                closureFib.joinWithNever >> triggerReprocessing
              else Async[F].unit
         _ <- waitingSemaphore.release
@@ -116,13 +117,14 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- withLock(runningSemaphore) {
                Async[F].delay(runningMap += (analysedTxn.id -> analysedTxn))
              }
-        _ <- analysedTxn.execute(this).start
+        _ <- analysedTxn.execute(this)
       } yield ()
 
     private def getRunningClosure: F[IdClosure] =
       for {
-        _ <- runningSemaphore.acquire
-        result <- if (runningMap.nonEmpty) {
+        _                  <- runningSemaphore.acquire
+        runningMapNonEmpty <- Async[F].delay(runningMap.nonEmpty)
+        result <- if (runningMapNonEmpty) {
                     for {
                       innerResult <- Async[F].delay {
                                        runningMap.values
@@ -137,17 +139,15 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       } yield result
 
     private def idClosureAnalysisRecursion(
-        currentClosure: IdClosure,
-        finalClosure: IdClosure,
         attemptToProcess: Boolean,
         stillWaiting: List[AnalysedTxn[_]] = List(),
         cycles: Int = 0
     ): F[Unit] =
       if (attemptToProcess) {
-        val newWaiting: F[(List[AnalysedTxn[_]], IdClosure, Int, Boolean)] =
+        val newWaiting: F[(Boolean, List[AnalysedTxn[_]], Int)] =
           for {
-            aTxn <- Async[F].delay(waitingBuffer.head)
-            _    <- Async[F].delay(waitingBuffer.dropInPlace(1))
+            currentClosure <- getRunningClosure
+            aTxn           <- Async[F].delay(waitingBuffer.remove(0))
             isCompatible <-
               Async[F].delay(aTxn.idClosure.isCompatibleWith(currentClosure))
             (newStillWaiting, newClosure, newCycles) <- if (isCompatible) {
@@ -155,7 +155,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                                                             _ <-
                                                               attemptExecution(
                                                                 aTxn
-                                                              )
+                                                              ).start
                                                             newClosure <-
                                                               Async[F].delay(
                                                                 currentClosure
@@ -178,20 +178,43 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                                                                    cycles - 1
                                                           )
                                                         }
+            waitingBufferIsEmpty <- Async[F].delay(waitingBuffer.isEmpty)
             attemptReprocess <-
-              Async[F].delay(
-                waitingBuffer.nonEmpty &&
-                  ((newClosure != finalClosure && newCycles < maxWaitingToProcessInLoop) || newCycles == -1)
-              )
-          } yield (newStillWaiting, newClosure, newCycles, attemptReprocess)
+              if (waitingBufferIsEmpty) {
+                Async[F].pure(false)
+              } else {
+                for {
+                  newCyclesNotProgressed <- Async[F].delay(newCycles == -1)
+                  result <- if (newCyclesNotProgressed) {
+                              Async[F].pure(true)
+                            } else {
+                              for {
+                                newCyclesMoreThanMax <-
+                                  Async[F].delay(
+                                    newCycles > maxWaitingToProcessInLoop
+                                  )
+                                innerResult <- if (newCyclesMoreThanMax) {
+                                                 Async[F].pure(false)
+                                               } else {
+                                                 Async[F].delay(
+                                                   closureTallies.getIdClosure
+                                                     .mergeWith(
+                                                       currentClosure
+                                                     ) != newClosure
+                                                 )
+                                               }
+                              } yield innerResult
+                            }
+                } yield result
+              }
+          } yield (attemptReprocess, newStillWaiting, newCycles + 1)
 
-        newWaiting.flatMap { nw =>
-          idClosureAnalysisRecursion(nw._2,
-                                     finalClosure,
-                                     nw._4,
-                                     nw._1,
-                                     nw._3 + 1
-          )
+        newWaiting.flatMap {
+          case (attemptReprocess, newStillWaiting, newCycles) =>
+            idClosureAnalysisRecursion(attemptReprocess,
+                                       newStillWaiting,
+                                       newCycles
+            )
         }
       } else {
         Async[F].delay(stillWaiting.foreach(waitingBuffer.prepend))
@@ -204,15 +227,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- waitingSemaphore.acquire
         _          <- schedulerTrigger.set(newTrigger)
         _ <- for {
-               runningClosure <- getRunningClosure
-               totalClosure <-
-                 Async[F].delay(
-                   closureTallies.getIdClosure.mergeWith(runningClosure)
-                 )
                attemptToProcess <- Async[F].delay(waitingBuffer.nonEmpty)
                _ <- idClosureAnalysisRecursion(
-                      runningClosure,
-                      totalClosure,
                       attemptToProcess
                     )
              } yield ()
