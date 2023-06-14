@@ -70,7 +70,7 @@ private[stm] case class IdClosureTallies(
     removeUpdateIds(idClosure.updatedIds)
   }
 
-  private[stm] lazy val getIdClosure: IdClosure =
+  private[stm] def getIdClosure: IdClosure =
     IdClosure(
       readIds = readIdTallies.keySet.toSet,
       updatedIds = updatedIdTallies.keySet.toSet
