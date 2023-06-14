@@ -117,7 +117,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- withLock(runningSemaphore) {
                Async[F].delay(runningMap += (analysedTxn.id -> analysedTxn))
              }
-        _ <- analysedTxn.execute(this)
+        _ <- analysedTxn.execute(this).start
       } yield ()
 
     private def getRunningClosure: F[IdClosure] =
@@ -155,7 +155,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                                                             _ <-
                                                               attemptExecution(
                                                                 aTxn
-                                                              ).start
+                                                              )
                                                             newClosure <-
                                                               Async[F].delay(
                                                                 currentClosure
