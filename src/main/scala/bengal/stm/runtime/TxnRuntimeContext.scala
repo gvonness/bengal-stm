@@ -149,25 +149,39 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         val newWaiting: F[(List[AnalysedTxn[_]], IdClosure, Int)] = for {
           aTxn <- Async[F].delay(waitingBuffer.head)
           _    <- Async[F].delay(waitingBuffer.dropInPlace(1))
-          isCompatible <- Async[F].delay(aTxn.idClosure.isCompatibleWith(currentClosure))
+          isCompatible <-
+            Async[F].delay(aTxn.idClosure.isCompatibleWith(currentClosure))
           (newStillWaiting, newClosure, newCycles) <- if (isCompatible) {
-            for {
-              _ <- attemptExecution(aTxn)
-              newClosure <- Async[F].delay(currentClosure.mergeWith(aTxn.idClosure))
-            } yield (stillWaiting, newClosure, cycles)
-          } else {
-            for {
-              newStillWaiting <- Async[F].delay(aTxn :: stillWaiting)
-            } yield (newStillWaiting, currentClosure, cycles - 1)
-          }
+                                                        for {
+                                                          _ <- attemptExecution(
+                                                                 aTxn
+                                                               )
+                                                          newClosure <-
+                                                            Async[F].delay(
+                                                              currentClosure
+                                                                .mergeWith(
+                                                                  aTxn.idClosure
+                                                                )
+                                                            )
+                                                        } yield (stillWaiting,
+                                                                 newClosure,
+                                                                 cycles
+                                                        )
+                                                      } else {
+                                                        for {
+                                                          newStillWaiting <-
+                                                            Async[F].delay(
+                                                              aTxn :: stillWaiting
+                                                            )
+                                                        } yield (newStillWaiting,
+                                                                 currentClosure,
+                                                                 cycles - 1
+                                                        )
+                                                      }
         } yield (newStillWaiting, newClosure, newCycles)
 
         newWaiting.flatMap { nw =>
-          idClosureAnalysisRecursion(nw._2,
-                                     finalClosure,
-                                     nw._1,
-                                     nw._3 + 1
-          )
+          idClosureAnalysisRecursion(nw._2, finalClosure, nw._1, nw._3 + 1)
         }
       } else {
         Async[F].delay(stillWaiting.foreach(waitingBuffer.prepend))
@@ -181,8 +195,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _          <- schedulerTrigger.set(newTrigger)
         _ <- for {
                runningClosure <- getRunningClosure
-               currentClosure <- Async[F].delay(closureTallies.getIdClosure)
-               totalClosure = currentClosure.mergeWith(runningClosure)
+               totalClosure <-
+                 Async[F].delay(
+                   closureTallies.getIdClosure.mergeWith(runningClosure)
+                 )
                _ <- idClosureAnalysisRecursion(
                       runningClosure,
                       totalClosure
