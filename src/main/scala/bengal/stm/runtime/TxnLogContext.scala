@@ -332,23 +332,30 @@ private[stm] trait TxnLogContext[F[_]] {
                   }
       } yield result
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
-      txnVarMap.getRuntimeId(key).map { rids =>
-        val ridSet = rids.toSet
-        if (
-          (initial.isDefined && current.isEmpty) || (initial.isEmpty && current.isDefined)
-        ) {
-          IdClosure(
-            readIds = ridSet + txnVarMap.runtimeId,
-            updatedIds = ridSet + txnVarMap.runtimeId
+    override private[stm] lazy val idClosure: F[IdClosure] = {
+      for {
+        ridSet <- txnVarMap.getRuntimeId(key).map(_.toSet)
+        result <-
+          Async[F].ifM(
+            Async[F].delay(
+              (initial.isDefined && current.isEmpty) || (initial.isEmpty && current.isDefined)
+            )
+          )(
+            Async[F].delay(
+              IdClosure(
+                readIds = ridSet + txnVarMap.runtimeId,
+                updatedIds = ridSet + txnVarMap.runtimeId
+              )
+            ),
+            Async[F].delay(
+              IdClosure(
+                readIds = ridSet,
+                updatedIds = ridSet
+              )
+            )
           )
-        } else {
-          IdClosure(
-            readIds = ridSet,
-            updatedIds = ridSet
-          )
-        }
-      }
+      } yield result
+    }
   }
 
   private[stm] sealed trait TxnLog { self =>
