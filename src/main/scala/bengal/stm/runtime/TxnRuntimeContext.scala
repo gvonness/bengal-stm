@@ -81,10 +81,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
           Async[F].delay(closureTallies.removeIdClosure(idClosure)).start
         _                     <- waitingSemaphore.acquire
         _                     <- withLock(runningSemaphore)(Async[F].delay(runningMap -= txnId))
-        waitingBufferNonEmpty <- Async[F].delay(waitingBuffer.nonEmpty)
-        _ <- if (waitingBufferNonEmpty)
-               closureFib.joinWithNever >> triggerReprocessing
-             else Async[F].unit
+        _ <- Async[F].ifM(Async[F].delay(waitingBuffer.nonEmpty))(
+               closureFib.joinWithNever >> triggerReprocessing,
+               Async[F].unit
+             )
         _ <- waitingSemaphore.release
       } yield ()
 
