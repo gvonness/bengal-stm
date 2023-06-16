@@ -120,10 +120,10 @@ private[stm] trait TxnLogContext[F[_]] {
       Async[F].delay(txnVar.registerRetry)
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      Async[F].delay {
+      Async[F].delay(txnVar.runtimeId).map { rId =>
         IdClosure(
-          readIds = Set(txnVar.runtimeId),
-          updatedIds = Set(txnVar.runtimeId)
+          readIds = Set(rId),
+          updatedIds = Set(rId)
         )
       }
   }
@@ -449,7 +449,7 @@ private[stm] trait TxnLogContext[F[_]] {
       value
         .map((this.asInstanceOf[TxnLog], _))
         .handleErrorWith { ex =>
-          Async[F].pure((TxnLogError(ex), ().asInstanceOf[V]))
+          Async[F].delay((TxnLogError(ex), ().asInstanceOf[V]))
         }
 
     override private[stm] def pure[V](value: V): F[(TxnLog, V)] =
@@ -457,22 +457,24 @@ private[stm] trait TxnLogContext[F[_]] {
 
     override private[stm] def getVar[V](
         txnVar: TxnVar[F, V]
-    ): F[(TxnLog, V)] =
+    ): F[(TxnLog, V)] = {
+      def fallbackF: F[(TxnLog, V)] =
+        for {
+          v <- txnVar.get
+          newLog <-
+            Async[F].delay(
+              log + (txnVar.runtimeId -> TxnLogReadOnlyVarEntry(v, txnVar))
+            )
+          result <- Async[F].delay((TxnLogValid(newLog), v))
+        } yield result
+
       log.get(txnVar.runtimeId) match {
         case Some(entry) =>
           Async[F].delay((this, entry.get.asInstanceOf[V]))
         case None =>
-          for {
-            v <- txnVar.get
-          } yield (this.copy(
-                     log + (txnVar.runtimeId -> TxnLogReadOnlyVarEntry(
-                       v,
-                       txnVar
-                     ))
-                   ),
-                   v
-          )
+          fallbackF
       }
+    }
 
     override private[stm] def setVar[V](
         newValue: F[V],

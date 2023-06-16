@@ -60,16 +60,19 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 StateT[F, IdClosure, V](s => Async[F].pure((s, value)))
               case TxnGetVar(txnVar) =>
                 StateT[F, IdClosure, V] { s =>
-                  txnVar.get.map { v =>
-                    (s.addReadId(txnVar.runtimeId), v)
-                  }
+                  for {
+                    rId    <- Async[F].delay(txnVar.runtimeId)
+                    v      <- txnVar.get
+                    result <- Async[F].delay(s.addReadId(rId))
+                  } yield (result, v)
                 }
               case adt: TxnGetVarMap[_, _] =>
                 StateT[F, IdClosure, V] { s =>
-                  adt.txnVarMap.get
-                    .map(v =>
-                      (s.addReadId(adt.txnVarMap.runtimeId), v.asInstanceOf[V])
-                    )
+                  for {
+                    rId    <- Async[F].delay(adt.txnVarMap.runtimeId)
+                    v      <- adt.txnVarMap.get
+                    result <- Async[F].delay(s.addReadId(rId))
+                  } yield (result, v.asInstanceOf[V])
                 }
               case adt: TxnGetVarMapValue[_, _] =>
                 StateT[F, IdClosure, V] { s =>
@@ -85,15 +88,24 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         adt.txnVarMap.getRuntimeActualisedId(
                           materializedKey
                         )
-                      eRId =
-                        adt.txnVarMap.getRuntimeExistentialId(
-                          materializedKey
+                      eRId <-
+                        Async[F].delay(
+                          adt.txnVarMap.getRuntimeExistentialId(
+                            materializedKey
+                          )
                         )
-                    } yield oARId
-                      .map(id =>
-                        (s.addReadId(id).addReadId(eRId), value.asInstanceOf[V])
-                      )
-                      .getOrElse((s.addReadId(eRId), value.asInstanceOf[V]))
+                      valueAsV <- Async[F].delay(value.asInstanceOf[V])
+                      result <- oARId match {
+                                  case Some(id) =>
+                                    Async[F]
+                                      .delay(s.addReadId(id).addReadId(eRId))
+                                      .map((_, valueAsV))
+                                  case None =>
+                                    Async[F]
+                                      .delay(s.addReadId(eRId))
+                                      .map((_, valueAsV))
+                                }
+                    } yield result
                   }.handleErrorWith { _ =>
                     Async[F].raiseError(StaticAnalysisShortCircuitException(s))
                   }
@@ -118,13 +130,23 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         adt.txnVarMap.getRuntimeActualisedId(
                           materializedKey
                         )
-                      eRId =
-                        adt.txnVarMap.getRuntimeExistentialId(
-                          materializedKey
+                      eRId <-
+                        Async[F].delay(
+                          adt.txnVarMap.getRuntimeExistentialId(
+                            materializedKey
+                          )
                         )
-                    } yield oARId
-                      .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                      .getOrElse((s.addWriteId(eRId), ()))
+                      result <- oARId match {
+                                  case Some(id) =>
+                                    Async[F]
+                                      .delay(s.addWriteId(id).addWriteId(eRId))
+                                      .map((_, ()))
+                                  case None =>
+                                    Async[F]
+                                      .delay(s.addWriteId(eRId))
+                                      .map((_, ()))
+                                }
+                    } yield result
                   }.handleErrorWith { _ =>
                     Async[F].delay((s, ()))
                   }
@@ -137,13 +159,22 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         adt.txnVarMap.getRuntimeActualisedId(
                           materializedKey
                         )
-                      eRId =
-                        adt.txnVarMap.getRuntimeExistentialId(
-                          materializedKey
-                        )
-                    } yield oARId
-                      .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                      .getOrElse((s.addWriteId(eRId), ()))
+                      eRId <- Async[F].delay(
+                                adt.txnVarMap.getRuntimeExistentialId(
+                                  materializedKey
+                                )
+                              )
+                      result <- oARId match {
+                                  case Some(id) =>
+                                    Async[F]
+                                      .delay(s.addWriteId(id).addWriteId(eRId))
+                                      .map((_, ()))
+                                  case None =>
+                                    Async[F]
+                                      .delay(s.addWriteId(eRId))
+                                      .map((_, ()))
+                                }
+                    } yield result
                   }.handleErrorWith { _ =>
                     Async[F].delay((s, ()))
                   }
@@ -156,13 +187,22 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         adt.txnVarMap.getRuntimeActualisedId(
                           materializedKey
                         )
-                      eRId =
-                        adt.txnVarMap.getRuntimeExistentialId(
-                          materializedKey
-                        )
-                    } yield oARId
-                      .map(id => (s.addWriteId(id).addWriteId(eRId), ()))
-                      .getOrElse((s.addWriteId(eRId), ()))
+                      eRId <- Async[F].delay(
+                                adt.txnVarMap.getRuntimeExistentialId(
+                                  materializedKey
+                                )
+                              )
+                      result <- oARId match {
+                                  case Some(id) =>
+                                    Async[F]
+                                      .delay(s.addWriteId(id).addWriteId(eRId))
+                                      .map((_, ()))
+                                  case None =>
+                                    Async[F]
+                                      .delay(s.addWriteId(eRId))
+                                      .map((_, ()))
+                                }
+                    } yield result
                   }.handleErrorWith { _ =>
                     Async[F].delay((s, ()))
                   }
