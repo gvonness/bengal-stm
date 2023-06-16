@@ -554,17 +554,19 @@ private[stm] trait TxnLogContext[F[_]] {
     ): F[(TxnLog, Map[K, V])] = {
       lazy val individualEntries: F[Map[TxnVarRuntimeId, TxnLogEntry[_]]] =
         for {
-          preTxnEntries <- if (!log.contains(txnVarMap.runtimeId)) {
-                             for {
-                               oldMap <- txnVarMap.get
-                               preTxn <-
-                                 oldMap.keySet.toList.traverse { ks =>
-                                   getVarMapValueEntry(ks, txnVarMap)
-                                 }
-                             } yield preTxn
-                           } else {
-                             Async[F].pure(List())
-                           }
+          preTxnEntries <-
+            Async[F].ifM(Async[F].delay(!log.contains(txnVarMap.runtimeId)))(
+              for {
+                oldMap <- txnVarMap.get
+                preTxn <-
+                  oldMap.keySet.toList.traverse { ks =>
+                    getVarMapValueEntry(ks, txnVarMap)
+                  }
+              } yield preTxn,
+              Async[F].pure(
+                List[Option[(TxnVarRuntimeId, TxnLogEntry[Option[V]])]]()
+              )
+            )
           currentEntries <- extractMap(txnVarMap, log)
           reads <- currentEntries.keySet.toList.traverse { ks =>
                      getVarMapValueEntry(ks, txnVarMap)
