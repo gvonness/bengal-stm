@@ -1055,22 +1055,25 @@ private[stm] trait TxnLogContext[F[_]] {
         txnVarMap: TxnVarMap[F, K, V],
         log: Map[TxnVarRuntimeId, TxnLogEntry[_]]
     ): F[Map[K, V]] = {
-      val logEntries = log.values.flatMap {
-        case TxnLogReadOnlyVarMapEntry(key, Some(initial), entryMap)
-            if txnVarMap.id == entryMap.id =>
-          Some(key -> initial)
-        case TxnLogUpdateVarMapEntry(key, _, Some(current), entryMap)
-            if txnVarMap.id == entryMap.id =>
-          Some(key -> current)
-        case _ =>
-          None
-      }.toMap.asInstanceOf[Map[K, V]]
+      val logEntriesF =
+        Async[F].delay(log.values.flatMap {
+          case TxnLogReadOnlyVarMapEntry(key, Some(initial), entryMap)
+              if txnVarMap.id == entryMap.id =>
+            Some(key -> initial)
+          case TxnLogUpdateVarMapEntry(key, _, Some(current), entryMap)
+              if txnVarMap.id == entryMap.id =>
+            Some(key -> current)
+          case _ =>
+            None
+        }.toMap.asInstanceOf[Map[K, V]])
 
-      if (log.contains(txnVarMap.runtimeId)) {
-        Async[F].pure(logEntries)
-      } else {
-        txnVarMap.get.map(_ ++ logEntries)
-      }
+      Async[F].ifM(Async[F].delay(log.contains(txnVarMap.runtimeId)))(
+        logEntriesF,
+        for {
+          logEntries   <- logEntriesF
+          txnVarMapGet <- txnVarMap.get
+        } yield txnVarMapGet ++ logEntries
+      )
     }
   }
 
