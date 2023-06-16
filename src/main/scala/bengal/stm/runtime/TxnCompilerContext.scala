@@ -70,9 +70,9 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 StateT[F, IdClosure, V] { s =>
                   for {
                     rId    <- Async[F].delay(adt.txnVarMap.runtimeId)
-                    v      <- adt.txnVarMap.get
+                    v      <- adt.txnVarMap.get.map(_.asInstanceOf[V])
                     result <- Async[F].delay(s.addReadId(rId))
-                  } yield (result, v.asInstanceOf[V])
+                  } yield (result, v)
                 }
               case adt: TxnGetVarMapValue[_, _] =>
                 StateT[F, IdClosure, V] { s =>
