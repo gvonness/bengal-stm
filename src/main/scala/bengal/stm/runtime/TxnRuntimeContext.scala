@@ -154,10 +154,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                 newClosure <-
                   Async[F].delay(currentClosure.mergeWith(aTxn.idClosure))
               } yield (stillWaiting, newClosure, cycles),
-              for {
-                newStillWaiting <-
-                  Async[F].delay(aTxn :: stillWaiting)
-              } yield (newStillWaiting, currentClosure, cycles - 1)
+              Async[F].delay(aTxn :: stillWaiting).map((_, currentClosure, cycles - 1))
             )
           attemptReprocess <-
             Async[F].ifM(Async[F].delay(waitingBuffer.isEmpty))(
