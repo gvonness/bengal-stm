@@ -640,47 +640,53 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] def getVarMapValue[K, V](
         key: F[K],
         txnVarMap: TxnVarMap[F, K, V]
-    ): F[(TxnLog, Option[V])] =
-      (for {
+    ): F[(TxnLog, Option[V])] = {
+      val result = for {
         materializedKey <- key
-        oTxnVar         <- txnVarMap.getTxnVar(materializedKey)
-        result <- (oTxnVar match {
-                    case Some(txnVar) =>
-                      log.get(txnVar.runtimeId) match {
-                        case Some(entry) =>
-                          Async[F].delay(
-                            (this, entry.get)
-                          ) //Noop
-                        case None =>
-                          for {
-                            txnVal <- txnVar.get
-                          } yield (this.copy(
-                                     log + (txnVar.runtimeId -> TxnLogReadOnlyVarMapEntry(
-                                       materializedKey,
-                                       Some(txnVal),
-                                       txnVarMap
-                                     ))
-                                   ),
-                                   Some(txnVal)
-                          )
-                      }
-                    case None =>
-                      for {
-                        rids <- txnVarMap.getRuntimeId(
-                                  materializedKey
-                                )
-                      } yield rids.flatMap(log.get) match {
-                        case entry :: Nil =>
-                          (this, entry.get) //Noop
-                        case _ =>
-                          (this, None)
-                      }
-                  }).map { case (log, value) =>
-                    (log.asInstanceOf[TxnLog], value.asInstanceOf[Option[V]])
-                  }
-      } yield result).handleErrorWith { ex =>
-        raiseError(ex).map(log => (log, None))
+        oTxnVar <- txnVarMap.getTxnVar(materializedKey)
+        rawResult <- oTxnVar match {
+          case Some(txnVar) =>
+            for {
+              rId <- Async[F].delay(txnVar.runtimeId)
+              entry <- Async[F].delay(
+                log.get(rId).map(_.asInstanceOf[TxnLogEntry[Option[V]]])
+              )
+              innerResult <- entry match {
+                case Some(entry) =>
+                  Async[F].delay((this, entry.get)) //Noop
+                case None =>
+                  for {
+                    txnVal <- txnVar.get
+                    newEntry <- Async[F].delay(
+                      rId -> TxnLogReadOnlyVarMapEntry(
+                        materializedKey,
+                        Option(txnVal),
+                        txnVarMap
+                      )
+                    )
+                    newLogRaw <- Async[F].delay(log + newEntry)
+                    newLog <- Async[F].delay(TxnLogValid(newLogRaw))
+                  } yield (newLog, Option(txnVal))
+              }
+            } yield innerResult
+          case None =>
+            for {
+              rids <- txnVarMap.getRuntimeId(materializedKey)
+              entries <- rids.traverse(rid => Async[F].delay(log.get(rid).map(_.asInstanceOf[TxnLogEntry[Option[V]]]))).map(_.flatten)
+              innerResult <- entries match {
+                case entry :: Nil =>
+                  Async[F].delay((this, entry.get))
+                case _ =>
+                  Async[F].delay[(TxnLogValid, Option[V])]((this, None))
+              }
+            } yield innerResult
+        }
+      } yield (rawResult._1.asInstanceOf[TxnLog], rawResult._2)
+
+      result.handleErrorWith { ex =>
+        raiseError(ex).map((_, None))
       }
+    }
 
     private def setVarMapValueEntry[K, V](
         key: K,
