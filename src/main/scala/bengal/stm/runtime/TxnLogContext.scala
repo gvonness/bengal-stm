@@ -643,44 +643,67 @@ private[stm] trait TxnLogContext[F[_]] {
     ): F[(TxnLog, Option[V])] = {
       val result = for {
         materializedKey <- key
-        oTxnVar <- txnVarMap.getTxnVar(materializedKey)
+        oTxnVar         <- txnVarMap.getTxnVar(materializedKey)
         rawResult <- oTxnVar match {
-          case Some(txnVar) =>
-            for {
-              rId <- Async[F].delay(txnVar.runtimeId)
-              entry <- Async[F].delay(
-                log.get(rId).map(_.asInstanceOf[TxnLogEntry[Option[V]]])
-              )
-              innerResult <- entry match {
-                case Some(entry) =>
-                  Async[F].delay((this, entry.get)) //Noop
-                case None =>
-                  for {
-                    txnVal <- txnVar.get
-                    newEntry <- Async[F].delay(
-                      rId -> TxnLogReadOnlyVarMapEntry(
-                        materializedKey,
-                        Option(txnVal),
-                        txnVarMap
-                      )
-                    )
-                    newLogRaw <- Async[F].delay(log + newEntry)
-                    newLog <- Async[F].delay(TxnLogValid(newLogRaw))
-                  } yield (newLog, Option(txnVal))
-              }
-            } yield innerResult
-          case None =>
-            for {
-              rids <- txnVarMap.getRuntimeId(materializedKey)
-              entries <- rids.traverse(rid => Async[F].delay(log.get(rid).map(_.asInstanceOf[TxnLogEntry[Option[V]]]))).map(_.flatten)
-              innerResult <- entries match {
-                case entry :: Nil =>
-                  Async[F].delay((this, entry.get))
-                case _ =>
-                  Async[F].delay[(TxnLogValid, Option[V])]((this, None))
-              }
-            } yield innerResult
-        }
+                       case Some(txnVar) =>
+                         for {
+                           rId <- Async[F].delay(txnVar.runtimeId)
+                           entry <-
+                             Async[F].delay(
+                               log
+                                 .get(rId)
+                                 .map(_.asInstanceOf[TxnLogEntry[Option[V]]])
+                             )
+                           innerResult <- entry match {
+                                            case Some(entry) =>
+                                              Async[F].delay(
+                                                (this, entry.get)
+                                              ) //Noop
+                                            case None =>
+                                              for {
+                                                txnVal <- txnVar.get
+                                                newEntry <-
+                                                  Async[F].delay(
+                                                    rId -> TxnLogReadOnlyVarMapEntry(
+                                                      materializedKey,
+                                                      Option(txnVal),
+                                                      txnVarMap
+                                                    )
+                                                  )
+                                                newLogRaw <-
+                                                  Async[F].delay(log + newEntry)
+                                                newLog <-
+                                                  Async[F].delay(
+                                                    TxnLogValid(newLogRaw)
+                                                  )
+                                              } yield (newLog, Option(txnVal))
+                                          }
+                         } yield innerResult
+                       case None =>
+                         for {
+                           rids <- txnVarMap.getRuntimeId(materializedKey)
+                           entries <-
+                             rids
+                               .traverse(rid =>
+                                 Async[F].delay(
+                                   log
+                                     .get(rid)
+                                     .map(
+                                       _.asInstanceOf[TxnLogEntry[Option[V]]]
+                                     )
+                                 )
+                               )
+                               .map(_.flatten)
+                           innerResult <- entries match {
+                                            case entry :: Nil =>
+                                              Async[F].delay((this, entry.get))
+                                            case _ =>
+                                              Async[F].delay[
+                                                (TxnLogValid, Option[V])
+                                              ]((this, None))
+                                          }
+                         } yield innerResult
+                     }
       } yield (rawResult._1.asInstanceOf[TxnLog], rawResult._2)
 
       result.handleErrorWith { ex =>
@@ -693,63 +716,68 @@ private[stm] trait TxnLogContext[F[_]] {
         newValue: V,
         txnVarMap: TxnVarMap[F, K, V]
     ): F[Option[(TxnVarRuntimeId, TxnLogEntry[Option[V]])]] =
-      txnVarMap
-        .getTxnVar(key)
-        .flatMap {
+      for {
+        oTxnVarMap <- txnVarMap.getTxnVar(key)
+        result <- oTxnVarMap match {
           case Some(txnVar) =>
-            log.get(txnVar.runtimeId) match {
-              case Some(entry) =>
+            for {
+              rId <- Async[F].delay(txnVar.runtimeId)
+              entry <-
                 Async[F].delay(
-                  Some(
-                    (txnVar.runtimeId,
-                     entry
-                       .asInstanceOf[TxnLogEntry[Option[V]]]
-                       .set(Some(newValue))
-                    )
-                  )
+                  log
+                    .get(rId)
+                    .map(_.asInstanceOf[TxnLogEntry[Option[V]]])
                 )
-              case None =>
-                txnVar.get.map { v =>
-                  if (v != newValue) {
-                    Some(
-                      (txnVar.runtimeId,
-                       TxnLogUpdateVarMapEntry(key,
-                                               Some(v),
-                                               Some(newValue),
-                                               txnVarMap
-                       )
-                      )
+              innerResult <- entry match {
+                case Some(entry) =>
+                  Async[F].delay(
+                    Option((rId, entry.set(Some(newValue))))
+                  )
+                case None =>
+                  for {
+                    txnVal <- txnVar.get
+                    i2Result <- Async[F].ifM(Async[F].delay(txnVal != newValue))(
+                      Async[F].delay(
+                        Option((rId, TxnLogUpdateVarMapEntry(key,
+                          Option(txnVal),
+                          Option(newValue),
+                          txnVarMap
+                        ).asInstanceOf[TxnLogEntry[Option[V]]]))),
+                      Async[F].pure[Option[(TxnVarRuntimeId, TxnLogEntry[Option[V]])]](None)
                     )
-                  } else {
-                    None
-                  }
-                }
-            }
+                  } yield i2Result
+              }
+            } yield innerResult
           case None =>
             // The txnVar may have been set to be created in this transaction
-            txnVarMap.getRuntimeId(key).map { rids =>
-              rids.flatMap(rid => log.get(rid).map((rid, _))) match {
-                case (rid, entry) :: _ =>
-                  Some(
-                    (rid,
-                     entry
-                       .asInstanceOf[TxnLogEntry[Option[V]]]
-                       .set(Some(newValue))
+            for {
+              rids <- txnVarMap.getRuntimeId(key)
+              entries <-
+                rids
+                  .traverse(rid =>
+                    Async[F].delay(
+                      log
+                        .get(rid)
+                        .map(e =>
+                          (rid, e.asInstanceOf[TxnLogEntry[Option[V]]])
+                        )
                     )
                   )
+                  .map(_.flatten)
+              innerResult <- entries match {
+                case (rid, entry) :: Nil =>
+                  Async[F].delay(Option((rid, entry.set(Some(newValue)))))
                 case _ =>
-                  Some(
-                    (rids.head,
-                     TxnLogUpdateVarMapEntry(key,
-                                             None,
-                                             Some(newValue),
-                                             txnVarMap
-                     )
-                    )
-                  )
+                  Async[F].delay(
+                    Option((rids.head, TxnLogUpdateVarMapEntry(key,
+                      None,
+                      Option(newValue),
+                      txnVarMap
+                    ).asInstanceOf[TxnLogEntry[Option[V]]])))
               }
-            }
+            } yield innerResult
         }
+      } yield result
 
     private def deleteVarMapValueEntry[K, V](
         key: K,
