@@ -159,9 +159,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
           attemptReprocess <-
             Async[F].ifM(Async[F].delay(waitingBuffer.isEmpty))(
               Async[F].pure(false),
-              Async[F].ifM(Async[F].delay(waitingBuffer.isEmpty))(
-                Async[F].pure(false),
-                Async[F].ifM(Async[F].delay(newCycles == -1))(
+              Async[F].ifM(Async[F].delay(newCycles == -1))(
                   Async[F].pure(true),
                   Async[F].ifM(
                     Async[F].delay(newCycles > maxWaitingToProcessInLoop)
@@ -174,7 +172,6 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                     )
                   )
                 )
-              )
             )
         } yield (attemptReprocess, newStillWaiting, newCycles + 1)
 
