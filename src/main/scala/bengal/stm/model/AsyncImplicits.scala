@@ -17,8 +17,10 @@
 package ai.entrolution
 package bengal.stm.model
 
+import cats.Parallel
 import cats.effect.kernel.Async
 
 private[stm] abstract class AsyncImplicits[F[_]](
-    protected implicit val asyncF: Async[F]
+    protected implicit val asyncF: Async[F],
+    protected implicit val parallelF: Parallel[F]
 )

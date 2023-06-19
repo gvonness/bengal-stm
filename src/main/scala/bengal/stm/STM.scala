@@ -22,6 +22,7 @@ import bengal.stm.model._
 import bengal.stm.model.runtime._
 import bengal.stm.runtime.{TxnCompilerContext, TxnLogContext, TxnRuntimeContext}
 
+import cats.Parallel
 import cats.effect.Ref
 import cats.effect.implicits.genSpawnOps
 import cats.effect.kernel.{Async, Deferred}
@@ -30,7 +31,7 @@ import cats.implicits._
 
 import scala.concurrent.duration.{FiniteDuration, NANOSECONDS}
 
-abstract class STM[F[_]: Async]
+abstract class STM[F[_]: Async: Parallel]
     extends AsyncImplicits[F]
     with TxnRuntimeContext[F]
     with TxnCompilerContext[F]
@@ -93,12 +94,12 @@ object STM {
   def apply[F[_]](implicit stm: STM[F]): STM[F] =
     stm
 
-  def runtime[F[_]: Async]: F[STM[F]] =
+  def runtime[F[_]: Async: Parallel]: F[STM[F]] =
     runtime(FiniteDuration(Long.MaxValue, NANOSECONDS),
             Runtime.getRuntime.availableProcessors() * 2
     )
 
-  def runtime[F[_]: Async](
+  def runtime[F[_]: Async: Parallel](
       retryMaxWait: FiniteDuration,
       maxWaitingToProcessInLoop: Int
   ): F[STM[F]] =

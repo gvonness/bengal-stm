@@ -554,7 +554,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         rids <- txnVarMap.getRuntimeId(key)
                         traversalResult <-
                           rids
-                            .traverse(rid =>
+                            .parTraverse(rid =>
                               Async[F].delay(
                                 log
                                   .get(rid)
@@ -592,7 +592,7 @@ private[stm] trait TxnLogContext[F[_]] {
               for {
                 oldMap <- txnVarMap.get
                 preTxn <-
-                  oldMap.keySet.toList.traverse { ks =>
+                  oldMap.keySet.toList.parTraverse { ks =>
                     getVarMapValueEntry(ks, txnVarMap)
                   }
               } yield preTxn,
@@ -601,7 +601,7 @@ private[stm] trait TxnLogContext[F[_]] {
               )
             )
           currentEntries <- extractMap(txnVarMap, log)
-          reads <- currentEntries.keySet.toList.traverse { ks =>
+          reads <- currentEntries.keySet.toList.parTraverse { ks =>
                      getVarMapValueEntry(ks, txnVarMap)
                    }
         } yield (preTxnEntries ::: reads).flatten.toMap
@@ -684,7 +684,7 @@ private[stm] trait TxnLogContext[F[_]] {
                            rids <- txnVarMap.getRuntimeId(materializedKey)
                            entries <-
                              rids
-                               .traverse(rid =>
+                               .parTraverse(rid =>
                                  Async[F].delay(
                                    log
                                      .get(rid)
@@ -774,7 +774,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         rids <- txnVarMap.getRuntimeId(key)
                         entries <-
                           rids
-                            .traverse(rid =>
+                            .parTraverse(rid =>
                               Async[F].delay(
                                 log
                                   .get(rid)
@@ -860,7 +860,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         rids <- txnVarMap.getRuntimeId(key)
                         entries <-
                           rids
-                            .traverse(rid =>
+                            .parTraverse(rid =>
                               Async[F].delay(
                                 log
                                   .get(rid)
@@ -900,11 +900,11 @@ private[stm] trait TxnLogContext[F[_]] {
       ): F[Map[TxnVarRuntimeId, TxnLogEntry[Option[V]]]] = for {
         currentMap <- extractMap(txnVarMap, log)
         deletions <-
-          (currentMap.keySet -- materializedNewMap.keySet).toList.traverse {
+          (currentMap.keySet -- materializedNewMap.keySet).toList.parTraverse {
             ks =>
               deleteVarMapValueEntry(ks, txnVarMap)
           }
-        updates <- materializedNewMap.toList.traverse { kv =>
+        updates <- materializedNewMap.toList.parTraverse { kv =>
                      setVarMapValueEntry(kv._1, kv._2, txnVarMap)
                    }
       } yield (deletions ::: updates).flatten.toMap
@@ -1024,7 +1024,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         rids <- txnVarMap.getRuntimeId(materializedKey)
                         entries <-
                           rids
-                            .traverse(rid =>
+                            .parTraverse(rid =>
                               Async[F].delay(
                                 log
                                   .get(rid)
@@ -1152,7 +1152,7 @@ private[stm] trait TxnLogContext[F[_]] {
                         rids <- txnVarMap.getRuntimeId(materializedKey)
                         entries <-
                           rids
-                            .traverse(rid =>
+                            .parTraverse(rid =>
                               Async[F].delay(
                                 log
                                   .get(rid)
@@ -1267,7 +1267,7 @@ private[stm] trait TxnLogContext[F[_]] {
                                 )
                         entries <-
                           rids
-                            .traverse(rid =>
+                            .parTraverse(rid =>
                               Async[F].delay(
                                 log
                                   .get(rid)
@@ -1335,13 +1335,13 @@ private[stm] trait TxnLogContext[F[_]] {
       }
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      log.values.toList.traverse { entry =>
+      log.values.toList.parTraverse { entry =>
         entry.idClosure
       }.map(_.reduce(_ mergeWith _))
 
     override private[stm] def withLock[A](fa: F[A]): F[A] =
       for {
-        locks <- log.values.toList.traverse(_.lock)
+        locks <- log.values.toList.parTraverse(_.lock)
         result <-
           locks.toSet.flatten
             .foldLeft(Resource.eval(Async[F].unit))((i, j) => i >> j.permit)
@@ -1349,7 +1349,7 @@ private[stm] trait TxnLogContext[F[_]] {
       } yield result
 
     override private[stm] lazy val commit: F[Unit] =
-      log.values.toList.traverse(_.commit).void
+      log.values.toList.parTraverse(_.commit).void
 
     override private[stm] lazy val getRetrySignal
         : F[Option[Deferred[F, Unit]]] =
@@ -1407,8 +1407,8 @@ private[stm] trait TxnLogContext[F[_]] {
       for {
         retrySignal <- Deferred[F, Unit]
         registerRetries <-
-          validLog.log.values.toList.traverse(_.getRegisterRetry)
-        _ <- registerRetries.traverse(rr => rr(retrySignal))
+          validLog.log.values.toList.parTraverse(_.getRegisterRetry)
+        _ <- registerRetries.parTraverse(rr => rr(retrySignal))
       } yield Some(retrySignal)
 
     override private[stm] lazy val scheduleRetry =
