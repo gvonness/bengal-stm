@@ -21,6 +21,7 @@ import bengal.stm.model._
 import bengal.stm.model.runtime._
 
 import cats.effect.Deferred
+import cats.effect.implicits.genSpawnOps
 import cats.effect.kernel.{Async, Resource}
 import cats.effect.std.Semaphore
 import cats.syntax.all._
@@ -1317,22 +1318,30 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] def scheduleRetry: F[TxnLog] =
       throw TxnRetryException(this)
 
-    // Favor computational efficiency over parallelism here by
-    // using a fold to short-circuit a log check instead of
-    // using existence in a parallel traversal. I.e. we have
-    // enough parallelism in the runtime to ensure good hardware
-    // utilisation
-    override private[stm] lazy val isDirty: F[Boolean] =
-      log.values.toList.foldLeft(Async[F].pure(false)) { (i, j) =>
+    override private[stm] lazy val isDirty: F[Boolean] = {
+      def setDeferred(container: Deferred[F, Boolean]): F[Unit] = {
         for {
-          prev <- i
-          result <- if (prev) {
-                      Async[F].pure(prev)
-                    } else {
-                      j.isDirty
-                    }
-        } yield result
+          dirtyIndicators <- log.values.toList.parTraverse { lv =>
+            Async[F].ifM(lv.isDirty)(
+              container.complete(true) >> Async[F].pure(true),
+              Async[F].pure(false)
+            )
+          }
+          _ <- Async[F].ifM(Async[F].delay(dirtyIndicators.exists(b => b)))(
+            Async[F].unit,
+            container.complete(false).void
+          )
+        } yield ()
       }
+
+      for {
+        gotDirt <- Deferred[F, Boolean]
+        logFib <- setDeferred(gotDirt).start
+        result <- gotDirt.get
+        _ <- logFib.cancel
+        _ <- logFib.join
+      } yield result
+    }
 
     override private[stm] lazy val idClosure: F[IdClosure] =
       log.values.toList.parTraverse { entry =>
