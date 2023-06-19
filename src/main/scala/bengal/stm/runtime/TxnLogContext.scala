@@ -1095,35 +1095,56 @@ private[stm] trait TxnLogContext[F[_]] {
                                            for {
                                              oEntry <- Async[F].delay(entry.get)
                                              i2Result <- oEntry match {
-                                               case Some(v) =>
-                                                 for {
-                                                   evaluation <- f(v)
-                                                   newEntry <- Async[F].delay(rId -> entry.set(Some(evaluation)))
-                                                   newLog <- Async[F].delay(log + newEntry)
-                                                 } yield TxnLogValid(newLog)
-                                               case None =>
-                                                 Async[F].delay {
-                                                   TxnLogError(
-                                                     new RuntimeException(
-                                                       s"Key $materializedKey not found for modification"
-                                                     )
-                                                   )
-                                                 }
-                                             }
+                                                           case Some(v) =>
+                                                             for {
+                                                               evaluation <- f(
+                                                                               v
+                                                                             )
+                                                               newEntry <-
+                                                                 Async[F].delay(
+                                                                   rId -> entry
+                                                                     .set(
+                                                                       Some(
+                                                                         evaluation
+                                                                       )
+                                                                     )
+                                                                 )
+                                                               newLog <-
+                                                                 Async[F].delay(
+                                                                   log + newEntry
+                                                                 )
+                                                             } yield TxnLogValid(
+                                                               newLog
+                                                             )
+                                                           case None =>
+                                                             Async[F].delay {
+                                                               TxnLogError(
+                                                                 new RuntimeException(
+                                                                   s"Key $materializedKey not found for modification"
+                                                                 )
+                                                               )
+                                                             }
+                                                         }
                                            } yield i2Result.asInstanceOf[TxnLog]
                                          case None =>
                                            for {
-                                             v           <- txnVar.get
-                                             txnRId <- Async[F].delay(txnVar.runtimeId)
+                                             v <- txnVar.get
+                                             txnRId <-
+                                               Async[F].delay(txnVar.runtimeId)
                                              evaluation <- f(v)
-                                             newEntry <- Async[F].delay(txnRId -> TxnLogUpdateVarMapEntry(
-                                               materializedKey,
-                                               Some(v),
-                                               Some(evaluation),
-                                               txnVarMap
-                                             ))
-                                             newLog <- Async[F].delay(log + newEntry)
-                                           } yield TxnLogValid(newLog).asInstanceOf[TxnLog]
+                                             newEntry <-
+                                               Async[F].delay(
+                                                 txnRId -> TxnLogUpdateVarMapEntry(
+                                                   materializedKey,
+                                                   Some(v),
+                                                   Some(evaluation),
+                                                   txnVarMap
+                                                 )
+                                               )
+                                             newLog <-
+                                               Async[F].delay(log + newEntry)
+                                           } yield TxnLogValid(newLog)
+                                             .asInstanceOf[TxnLog]
                                        }
                       } yield innerResult
                     case None =>
@@ -1137,42 +1158,57 @@ private[stm] trait TxnLogContext[F[_]] {
                                   .get(rid)
                                   .map(e =>
                                     (rid,
-                                      e.asInstanceOf[TxnLogEntry[Option[V]]]
+                                     e.asInstanceOf[TxnLogEntry[Option[V]]]
                                     )
                                   )
                               )
                             )
                             .map(_.flatten)
                         innerResult <- entries match {
-                          case (rid, entry) :: _ =>
-                            for {
-                              oEntry <- Async[F].delay(entry.get)
-                              i2Result <- oEntry match {
-                                case Some(v) =>
-                                  for {
-                                    evaluation <- f(v)
-                                    newEntry <- Async[F].delay(rid -> entry.set(Some(evaluation)))
-                                    newLog <- Async[F].delay(log + newEntry)
-                                  } yield TxnLogValid(newLog)
-                                case None =>
-                                  Async[F].delay {
-                                    TxnLogError(
-                                      new RuntimeException(
-                                        s"Key $materializedKey not found for modification"
-                                      )
-                                    )
-                                  }
-                              }
-                            } yield i2Result.asInstanceOf[TxnLog]
-                          case _ =>
-                            Async[F].delay {
-                              TxnLogError(
-                                new RuntimeException(
-                                  s"Key $materializedKey not found for modification"
-                                )
-                              ).asInstanceOf[TxnLog]
-                            }
-                        }
+                                         case (rid, entry) :: _ =>
+                                           for {
+                                             oEntry <- Async[F].delay(entry.get)
+                                             i2Result <- oEntry match {
+                                                           case Some(v) =>
+                                                             for {
+                                                               evaluation <- f(
+                                                                               v
+                                                                             )
+                                                               newEntry <-
+                                                                 Async[F].delay(
+                                                                   rid -> entry
+                                                                     .set(
+                                                                       Some(
+                                                                         evaluation
+                                                                       )
+                                                                     )
+                                                                 )
+                                                               newLog <-
+                                                                 Async[F].delay(
+                                                                   log + newEntry
+                                                                 )
+                                                             } yield TxnLogValid(
+                                                               newLog
+                                                             )
+                                                           case None =>
+                                                             Async[F].delay {
+                                                               TxnLogError(
+                                                                 new RuntimeException(
+                                                                   s"Key $materializedKey not found for modification"
+                                                                 )
+                                                               )
+                                                             }
+                                                         }
+                                           } yield i2Result.asInstanceOf[TxnLog]
+                                         case _ =>
+                                           Async[F].delay {
+                                             TxnLogError(
+                                               new RuntimeException(
+                                                 s"Key $materializedKey not found for modification"
+                                               )
+                                             ).asInstanceOf[TxnLog]
+                                           }
+                                       }
                       } yield innerResult
                   }
       } yield result
@@ -1183,57 +1219,90 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] def deleteVarMapValue[K, V](
         key: F[K],
         txnVarMap: TxnVarMap[F, K, V]
-    ): F[TxnLog] =
-      (for {
+    ): F[TxnLog] = {
+      val resultSpec = for {
         materializedKey <- key
         oTxnVar         <- txnVarMap.getTxnVar(materializedKey)
         result <- oTxnVar match {
                     case Some(txnVar) =>
-                      log.get(txnVar.runtimeId) match {
-                        case Some(entry) =>
+                      for {
+                        rId <- Async[F].delay(txnVar.runtimeId)
+                        oEntry <-
                           Async[F].delay(
-                            this.copy(
-                              log + (txnVar.runtimeId -> entry
-                                .asInstanceOf[TxnLogEntry[Option[V]]]
-                                .set(None))
-                            )
+                            log
+                              .get(rId)
+                              .map(_.asInstanceOf[TxnLogEntry[Option[V]]])
                           )
-                        case None =>
-                          for {
-                            txnVal <- txnVar.get
-                          } yield this.copy(
-                            log + (txnVar.runtimeId ->
-                              TxnLogUpdateVarMapEntry(materializedKey,
-                                                      Some(txnVal),
-                                                      None,
-                                                      txnVarMap
-                              ))
-                          )
-                      }
+                        innerResult <- oEntry match {
+                                         case Some(entry) =>
+                                           for {
+                                             newEntry <-
+                                               Async[F].delay(
+                                                 rId -> entry.set(None)
+                                               )
+                                             newLog <-
+                                               Async[F].delay(log + newEntry)
+                                           } yield TxnLogValid(newLog)
+                                         case None =>
+                                           for {
+                                             txnVal <- txnVar.get
+                                             newEntry <-
+                                               Async[F].delay(
+                                                 rId -> TxnLogUpdateVarMapEntry(
+                                                   materializedKey,
+                                                   Some(txnVal),
+                                                   None,
+                                                   txnVarMap
+                                                 )
+                                               )
+                                             newLog <-
+                                               Async[F].delay(log + newEntry)
+                                           } yield TxnLogValid(newLog)
+                                       }
+                      } yield innerResult.asInstanceOf[TxnLog]
                     case None =>
                       for {
                         rids <- txnVarMap.getRuntimeId(
                                   materializedKey
                                 )
-                      } yield rids.flatMap(rid =>
-                        log.get(rid).map((rid, _))
-                      ) match {
-                        case (rid, entry) :: _ =>
-                          this.copy(
-                            log + (rid -> entry
-                              .asInstanceOf[TxnLogEntry[Option[V]]]
-                              .set(None))
-                          )
-                        case _ => // Throw error to be consistent with read behaviour
-                          TxnLogError {
-                            new RuntimeException(
-                              s"Tried to remove non-existent key $materializedKey in transactional map"
+                        entries <-
+                          rids
+                            .traverse(rid =>
+                              Async[F].delay(
+                                log
+                                  .get(rid)
+                                  .map(e =>
+                                    (rid,
+                                     e.asInstanceOf[TxnLogEntry[Option[V]]]
+                                    )
+                                  )
+                              )
                             )
-                          }
-                      }
+                            .map(_.flatten)
+                        innerResult <- entries match {
+                                         case (rid, entry) :: _ =>
+                                           for {
+                                             newEntry <-
+                                               Async[F].delay(
+                                                 rid -> entry.set(None)
+                                               )
+                                             newLog <-
+                                               Async[F].delay(log + newEntry)
+                                           } yield TxnLogValid(newLog)
+                                         case _ => // Throw error to be consistent with read behaviour
+                                           Async[F].delay(TxnLogError {
+                                             new RuntimeException(
+                                               s"Tried to remove non-existent key $materializedKey in transactional map"
+                                             )
+                                           })
+                                       }
+
+                      } yield innerResult.asInstanceOf[TxnLog]
                   }
-      } yield result.asInstanceOf[TxnLog])
-        .handleErrorWith(raiseError)
+      } yield result
+
+      resultSpec.handleErrorWith(raiseError)
+    }
 
     override private[stm] def raiseError(ex: Throwable): F[TxnLog] =
       Async[F].delay(TxnLogError(ex))
