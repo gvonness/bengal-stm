@@ -359,7 +359,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-
           Async[F].delay(
-            AnalysedTxn(id, txn, staticAnalysisResult._1, completionSignal)
+            AnalysedTxn(id, txn, staticAnalysisResult._1.getCleansed, completionSignal)
           )
         _          <- scheduler.submitTxn(analysedTxn).start
         completion <- completionSignal.get

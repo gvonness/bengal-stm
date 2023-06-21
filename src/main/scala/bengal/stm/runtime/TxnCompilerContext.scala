@@ -84,10 +84,6 @@ private[stm] trait TxnCompilerContext[F[_]] {
                         oTxnVar
                           .map(_.get.map(Some(_)))
                           .getOrElse(Async[F].pure(None))
-                      oARId <-
-                        adt.txnVarMap.getRuntimeActualisedId(
-                          materializedKey
-                        )
                       eRId <-
                         Async[F].delay(
                           adt.txnVarMap.getRuntimeExistentialId(
@@ -95,16 +91,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                           )
                         )
                       valueAsV <- Async[F].delay(value.asInstanceOf[V])
-                      result <- oARId match {
-                                  case Some(id) =>
-                                    Async[F]
-                                      .delay(s.addReadId(id).addReadId(eRId))
-                                      .map((_, valueAsV))
-                                  case None =>
-                                    Async[F]
-                                      .delay(s.addReadId(eRId))
-                                      .map((_, valueAsV))
-                                }
+                      result <- Async[F].delay(s.addReadId(eRId)).map((_, valueAsV))
                     } yield result
                   }.handleErrorWith { _ =>
                     Async[F].raiseError(StaticAnalysisShortCircuitException(s))
@@ -126,26 +113,13 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 StateT[F, IdClosure, Unit] { s =>
                   adt.key.flatMap { materializedKey =>
                     for {
-                      oARId <-
-                        adt.txnVarMap.getRuntimeActualisedId(
-                          materializedKey
-                        )
                       eRId <-
                         Async[F].delay(
                           adt.txnVarMap.getRuntimeExistentialId(
                             materializedKey
                           )
                         )
-                      result <- oARId match {
-                                  case Some(id) =>
-                                    Async[F]
-                                      .delay(s.addWriteId(id).addWriteId(eRId))
-                                      .map((_, ()))
-                                  case None =>
-                                    Async[F]
-                                      .delay(s.addWriteId(eRId))
-                                      .map((_, ()))
-                                }
+                      result <- Async[F].delay(s.addWriteId(eRId)).map((_, ()))
                     } yield result
                   }.handleErrorWith { _ =>
                     Async[F].delay((s, ()))
@@ -155,25 +129,13 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 StateT[F, IdClosure, Unit] { s =>
                   adt.key.flatMap { materializedKey =>
                     for {
-                      oARId <-
-                        adt.txnVarMap.getRuntimeActualisedId(
-                          materializedKey
-                        )
                       eRId <- Async[F].delay(
                                 adt.txnVarMap.getRuntimeExistentialId(
                                   materializedKey
                                 )
                               )
-                      result <- oARId match {
-                                  case Some(id) =>
-                                    Async[F]
-                                      .delay(s.addWriteId(id).addWriteId(eRId))
+                      result <- Async[F].delay(s.addWriteId(eRId))
                                       .map((_, ()))
-                                  case None =>
-                                    Async[F]
-                                      .delay(s.addWriteId(eRId))
-                                      .map((_, ()))
-                                }
                     } yield result
                   }.handleErrorWith { _ =>
                     Async[F].delay((s, ()))
@@ -183,25 +145,12 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 StateT[F, IdClosure, Unit] { s =>
                   adt.key.flatMap { materializedKey =>
                     for {
-                      oARId <-
-                        adt.txnVarMap.getRuntimeActualisedId(
-                          materializedKey
-                        )
                       eRId <- Async[F].delay(
                                 adt.txnVarMap.getRuntimeExistentialId(
                                   materializedKey
                                 )
                               )
-                      result <- oARId match {
-                                  case Some(id) =>
-                                    Async[F]
-                                      .delay(s.addWriteId(id).addWriteId(eRId))
-                                      .map((_, ()))
-                                  case None =>
-                                    Async[F]
-                                      .delay(s.addWriteId(eRId))
-                                      .map((_, ()))
-                                }
+                      result <- Async[F].delay(s.addWriteId(eRId)).map((_, ()))
                     } yield result
                   }.handleErrorWith { _ =>
                     Async[F].delay((s, ()))

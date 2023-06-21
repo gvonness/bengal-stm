@@ -78,17 +78,10 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
   private[stm] def getRuntimeExistentialId(key: K): TxnVarRuntimeId =
     UUID.nameUUIDFromBytes((id, key).toString.getBytes).hashCode()
 
-  private[stm] def getRuntimeActualisedId(
-      key: K
-  ): F[Option[TxnVarRuntimeId]] =
-    getTxnVar(key).map(_.map(_.runtimeId))
-
   private[stm] def getRuntimeId(
       key: K
-  ): F[List[TxnVarRuntimeId]] =
-    getRuntimeActualisedId(key).map(
-      List(_, Some(getRuntimeExistentialId(key))).flatten
-    )
+  ): F[TxnVarRuntimeId] =
+    Async[F].delay(getRuntimeExistentialId(key))
 
   // Get transactional IDs for any keys already existing
   // in the map

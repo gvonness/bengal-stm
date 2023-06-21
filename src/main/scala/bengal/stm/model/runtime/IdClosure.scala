@@ -22,6 +22,8 @@ private[stm] case class IdClosure(
     updatedIds: Set[TxnVarRuntimeId]
 ) {
 
+  private[stm] lazy val getCleansed = this.copy(readIds = readIds -- updatedIds)
+
   private[stm] lazy val combinedIds: Set[TxnVarRuntimeId] =
     readIds ++ updatedIds
 
