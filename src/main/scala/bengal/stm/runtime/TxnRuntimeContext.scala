@@ -27,6 +27,8 @@ import cats.effect.{Deferred, Ref}
 import cats.syntax.all._
 
 import scala.collection.mutable.{ListBuffer, Map => MutableMap}
+import scala.collection.concurrent.TrieMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import scala.concurrent.duration.FiniteDuration
 
 private[stm] trait TxnRuntimeContext[F[_]] {
