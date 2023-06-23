@@ -20,8 +20,8 @@ package bengal.stm.runtime
 import bengal.stm.model._
 import bengal.stm.model.runtime._
 
+import cats.effect.implicits._
 import cats.effect.Deferred
-import cats.effect.implicits.genSpawnOps
 import cats.effect.kernel.{Async, Resource}
 import cats.effect.std.Semaphore
 import cats.syntax.all._
@@ -402,8 +402,6 @@ private[stm] trait TxnLogContext[F[_]] {
     private[stm] def scheduleRetry: F[TxnLog]
 
     private[stm] def isDirty: F[Boolean]
-
-    private[stm] def getRetrySignal: F[Option[Deferred[F, Unit]]]
 
     private[stm] def commit: F[Unit]
 
@@ -1233,10 +1231,6 @@ private[stm] trait TxnLogContext[F[_]] {
 
     override private[stm] lazy val commit: F[Unit] =
       log.values.toList.parTraverse(_.commit).void
-
-    override private[stm] lazy val getRetrySignal
-        : F[Option[Deferred[F, Unit]]] =
-      Async[F].pure(None)
   }
 
   private[stm] object TxnLogValid {
@@ -1285,15 +1279,6 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val isDirty: F[Boolean] =
       validLog.isDirty
 
-    override private[stm] lazy val getRetrySignal
-        : F[Option[Deferred[F, Unit]]] =
-      for {
-        retrySignal <- Deferred[F, Unit]
-        registerRetries <-
-          validLog.log.values.toList.parTraverse(_.getRegisterRetry)
-        _ <- registerRetries.parTraverse(rr => rr(retrySignal))
-      } yield Some(retrySignal)
-
     override private[stm] lazy val scheduleRetry =
       Async[F].pure(this)
 
@@ -1322,10 +1307,6 @@ private[stm] trait TxnLogContext[F[_]] {
 
     override private[stm] lazy val idClosure: F[IdClosure] =
       Async[F].pure(IdClosure.empty)
-
-    override private[stm] lazy val getRetrySignal
-        : F[Option[Deferred[F, Unit]]] =
-      Async[F].pure(None)
   }
 
   private[stm] case class TxnRetryException(validLog: TxnLogValid)

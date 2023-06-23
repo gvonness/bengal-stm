@@ -22,16 +22,14 @@ import bengal.stm.model._
 import bengal.stm.model.runtime._
 import bengal.stm.runtime.{TxnCompilerContext, TxnLogContext, TxnRuntimeContext}
 
-import cats.Parallel
 import cats.effect.Ref
-import cats.effect.implicits.genSpawnOps
-import cats.effect.kernel.{Async, Deferred}
+import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
 import cats.implicits._
 
 import scala.concurrent.duration.{FiniteDuration, NANOSECONDS}
 
-abstract class STM[F[_]: Async: Parallel]
+abstract class STM[F[_]: Async]
     extends AsyncImplicits[F]
     with TxnRuntimeContext[F]
     with TxnCompilerContext[F]
@@ -94,22 +92,16 @@ object STM {
   def apply[F[_]](implicit stm: STM[F]): STM[F] =
     stm
 
-  def runtime[F[_]: Async: Parallel]: F[STM[F]] =
-    runtime(FiniteDuration(Long.MaxValue, NANOSECONDS),
-            Runtime.getRuntime.availableProcessors() * 2
-    )
+  def runtime[F[_]: Async]: F[STM[F]] =
+    runtime(FiniteDuration(Long.MaxValue, NANOSECONDS))
 
-  def runtime[F[_]: Async: Parallel](
-      retryMaxWait: FiniteDuration,
-      maxWaitingToProcessInLoop: Int
+  def runtime[F[_]: Async](
+      retryMaxWait: FiniteDuration
   ): F[STM[F]] =
     for {
       idGenVar            <- Ref.of[F, Long](0)
       idGenTxn            <- Ref.of[F, Long](0)
-      runningSemaphore    <- Semaphore[F](1)
-      waitingSemaphore    <- Semaphore[F](1)
-      schedulerTrigger    <- Deferred[F, Unit]
-      schedulerTriggerRef <- Ref.of(schedulerTrigger)
+      graphBuilderSemaphore    <- Semaphore[F](1)
       stm <- Async[F].delay {
                new STM[F] {
                  override val txnVarIdGen: Ref[F, TxnVarId] = idGenVar
@@ -118,11 +110,8 @@ object STM {
                  val txnRuntime: TxnRuntime = new TxnRuntime {
                    override val scheduler: TxnScheduler =
                      TxnScheduler(
-                       runningSemaphore,
-                       waitingSemaphore,
-                       schedulerTriggerRef,
-                       retryMaxWait,
-                       maxWaitingToProcessInLoop
+                       graphBuilderSemaphore = graphBuilderSemaphore,
+                       retryWaitMaxDuration = retryMaxWait
                      )
                  }
 
@@ -138,6 +127,5 @@ object STM {
                    txnRuntime.commit(txn)
                }
              }
-      _ <- stm.txnRuntime.scheduler.reprocessingRecursion.start
     } yield stm
 }
