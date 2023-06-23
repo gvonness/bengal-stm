@@ -147,8 +147,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- graphBuilderSemaphore.acquire
         _ <- Async[F].delay(activeTransactions.remove(analysedTxn.id))
-        _ <- graphBuilderSemaphore.release
         _ <- analysedTxn.triggerUnsub
+        _ <- graphBuilderSemaphore.release
       } yield ()
 
     def registerRunning(analysedTxn: AnalysedTxn[_]): F[Unit] =
@@ -302,7 +302,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                           poll(ex.submitTxn(this))
                         case TxnResultLogDirty(idClosureRefinement) =>
                           poll {
-                            ex.submitTxn(
+                            ex.submitTxnForImmediateRetry(
                               this.copy(idClosure = idClosureRefinement.getCleansed)
                             )
                           }
