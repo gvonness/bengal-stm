@@ -23,7 +23,10 @@ import scala.collection.mutable.{Map => MutableMap}
 
 package object runtime {
   private[stm] type TxnVarId        = Long
-  private[stm] type TxnVarRuntimeId = Int
+  private[stm] case class TxnVarRuntimeId(value: Int, parent: Option[TxnVarRuntimeId] = None) {
+    private[stm] def addParent(parent: TxnVarRuntimeId): TxnVarRuntimeId =
+      this.copy(parent = Some(parent))
+  }
   private[stm] type TxnId           = Long
 
   private[stm] type VarIndex[F[_], K, V] = MutableMap[K, TxnVar[F, V]]

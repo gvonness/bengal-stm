@@ -79,8 +79,8 @@ private[stm] trait TxnLogContext[F[_]] {
       Async[F].delay(txnVar.registerRetry)
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      Async[F].delay {
-        IdClosure(readIds = Set(txnVar.runtimeId), updatedIds = Set())
+      Async[F].delay(txnVar.runtimeId).map { rid =>
+        IdClosure(readIds = Set(rid), updatedIds = Set())
       }
   }
 
@@ -121,11 +121,8 @@ private[stm] trait TxnLogContext[F[_]] {
       Async[F].delay(txnVar.registerRetry)
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      Async[F].delay(txnVar.runtimeId).map { rId =>
-        IdClosure(
-          readIds = Set(),
-          updatedIds = Set(rId)
-        )
+      Async[F].delay(txnVar.runtimeId).map { rid =>
+        IdClosure(readIds = Set(), updatedIds = Set(rid))
       }
   }
 
@@ -163,11 +160,8 @@ private[stm] trait TxnLogContext[F[_]] {
       Async[F].delay(txnVarMap.registerRetry)
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      Async[F].delay {
-        IdClosure(
-          readIds = Set(txnVarMap.runtimeId),
-          updatedIds = Set()
-        )
+      Async[F].delay(txnVarMap.runtimeId).map { rid =>
+        IdClosure(readIds = Set(), updatedIds = Set(rid))
       }
   }
 
@@ -208,11 +202,8 @@ private[stm] trait TxnLogContext[F[_]] {
       Async[F].delay(txnVarMap.registerRetry)
 
     override private[stm] lazy val idClosure: F[IdClosure] =
-      Async[F].delay {
-        IdClosure(
-          readIds = Set(),
-          updatedIds = Set(txnVarMap.runtimeId)
-        )
+      Async[F].delay(txnVarMap.runtimeId).map { rid =>
+        IdClosure(readIds = Set(), updatedIds = Set(rid))
       }
   }
 

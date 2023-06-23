@@ -19,13 +19,27 @@ package bengal.stm.model.runtime
 
 private[stm] case class IdClosure(
     readIds: Set[TxnVarRuntimeId],
-    updatedIds: Set[TxnVarRuntimeId]
+    updatedIds: Set[TxnVarRuntimeId],
+    validated: Boolean = false
 ) {
 
-  private[stm] lazy val getCleansed = this.copy(readIds = readIds -- updatedIds)
+  private[stm] lazy val getCleansed =
+    if (validated) {
+      this
+    } else {
+      this.copy(readIds = readIds -- updatedIds, validated = true)
+    }
 
   private[stm] lazy val combinedIds: Set[TxnVarRuntimeId] =
     readIds ++ updatedIds
+
+  private[stm] lazy val combinedRawIds: Set[Int] = combinedIds.map(_.value)
+
+  private[stm] lazy val updateRawIds: Set[Int] = updatedIds.map(_.value)
+
+  private[stm] lazy val parentReadIds = readIds.flatMap(_.parent)
+
+  private[stm] lazy val parentUpdateIds = updatedIds.flatMap(_.parent)
 
   private[stm] def addReadId(id: TxnVarRuntimeId): IdClosure =
     this.copy(readIds = readIds + id)
@@ -38,10 +52,11 @@ private[stm] case class IdClosure(
               updatedIds = updatedIds ++ idScope.updatedIds
     )
 
-  private[stm] def isCompatibleWith(idScope: IdClosure): Boolean =
-    combinedIds.intersect(idScope.updatedIds).isEmpty && idScope.combinedIds
-      .intersect(updatedIds)
-      .isEmpty
+  private def asymmetricCompatibleWith(input: IdClosure): Boolean =
+    combinedRawIds.intersect(input.updateRawIds).isEmpty && !combinedIds.exists(_.parent.exists(p => input.updateRawIds.contains(p.value)))
+
+  private[stm] def isCompatibleWith(input: IdClosure): Boolean =
+    asymmetricCompatibleWith(input) && input.asymmetricCompatibleWith(this)
 }
 
 private[stm] object IdClosure {
