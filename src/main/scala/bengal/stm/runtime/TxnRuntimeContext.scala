@@ -26,7 +26,13 @@ import cats.effect.std.Semaphore
 import cats.effect.{Deferred, Ref}
 import cats.syntax.all._
 
-import scala.collection.mutable.{ListBuffer, Map => MutableMap}
+import scala.collection.mutable.{
+  ListBuffer,
+  Map => MutableMap,
+  Set => MutableSet
+}
+import scala.collection.concurrent.TrieMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import scala.concurrent.duration.FiniteDuration
 
 private[stm] trait TxnRuntimeContext[F[_]] {
@@ -56,14 +62,13 @@ private[stm] trait TxnRuntimeContext[F[_]] {
   }
 
   private[stm] case class TxnScheduler(
-      runningMap: MutableMap[TxnId, AnalysedTxn[_]],
-      runningSemaphore: Semaphore[F],
-      waitingBuffer: ListBuffer[AnalysedTxn[_]],
-      waitingSemaphore: Semaphore[F],
-      closureTallies: IdClosureTallies,
-      schedulerTrigger: Ref[F, Deferred[F, Unit]],
-      retryWaitMaxDuration: FiniteDuration,
-      maxWaitingToProcessInLoop: Int
+                                        graphBuilderSemaphore: Semaphore[F],
+                                        activeTransactions: TrieMap[TxnId, AnalysedTxn[_]],
+                                        graphBuilder: TrieMap[TxnVarRuntimeId, TxnIdGroup],
+                                        closureTallies: IdClosureTallies,
+                                        schedulerTrigger: Ref[F, Deferred[F, Unit]],
+                                        retryWaitMaxDuration: FiniteDuration,
+                                        maxWaitingToProcessInLoop: Int
   ) {
 
     private def withLock[A](semaphore: Semaphore[F])(fa: F[A]): F[A] =
@@ -79,8 +84,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         closureFib <-
           Async[F].delay(closureTallies.removeIdClosure(idClosure)).start
-        _                     <- waitingSemaphore.acquire
-        _                     <- withLock(runningSemaphore)(Async[F].delay(runningMap -= txnId))
+        _ <- waitingSemaphore.acquire
+        _ <- withLock(runningSemaphore)(Async[F].delay(runningMap -= txnId))
         _ <- Async[F].ifM(Async[F].delay(waitingBuffer.nonEmpty))(
                closureFib.joinWithNever >> triggerReprocessing,
                Async[F].unit
@@ -88,16 +93,140 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- waitingSemaphore.release
       } yield ()
 
-    private[stm] def submitTxn[V](
-        analysedTxn: AnalysedTxn[V]
-    ): F[Unit] =
+    def submitTxnForImmediateRetry(analysedTxn: AnalysedTxn[_]): F[Unit] =
+      activeTransactions.values.toList.parTraverse { aTxn =>
+          for {
+            _ <- aTxn.statusSemaphore.acquire
+            status <- aTxn.executionStatus.get
+            _ <- status match {
+              case Running =>
+                Async[F].ifM(Async[F].delay(analysedTxn.idClosure.isCompatibleWith(aTxn.idClosure)))(
+                  Async[F].unit,
+                  aTxn.subscribeDownstreamDependency(analysedTxn)
+                )
+              case Scheduled =>
+                Async[F].ifM(Async[F].delay(analysedTxn.idClosure.isCompatibleWith(aTxn.idClosure)))(
+                  Async[F].unit,
+                  analysedTxn.subscribeDownstreamDependency(aTxn)
+                )
+              case _ =>
+                Async[F].unit
+            }
+            _ <- aTxn.statusSemaphore.release
+          } yield ()
+        }.void
+
+    def submitAnalysedTxn(analysedTxn: AnalysedTxn[_]): F[Unit] =
       for {
-        _ <- waitingSemaphore.acquire
-        _ <- Async[F].delay(waitingBuffer.append(analysedTxn))
-        _ <- Async[F].delay(closureTallies.addIdClosure(analysedTxn.idClosure))
-        _ <- triggerReprocessing
-        _ <- waitingSemaphore.release
+        validatedClosure <- Async[F].delay(analysedTxn.idClosure) // already validated on insertion
+        _ <- graphBuilderSemaphore.acquire
+        readFibre <- validatedClosure.readIds.toList.parTraverse { rId =>
+          graphBuilder.get(rId) match {
+            case Some(txnGrp) =>
+              for {
+                _ <- Async[F].delay(txnGrp.addReadId(analysedTxn.id))
+                _ <- txnGrp.updateId match {
+                  case Some(uid) =>
+                    activeTransactions
+                      .get(uid)
+                      .map(
+                        _.subscribeDownstreamDependency(analysedTxn)
+                      )
+                      .getOrElse(Async[F].unit)
+                  case None =>
+                    Async[F].unit
+                }
+              } yield ()
+            case None =>
+              rId.parent match {
+                case Some(pRId) =>
+                  graphBuilder.get(pRId) match {
+                    case Some(txnGrp) =>
+                      for {
+                        newIdGroup <- Async[F].delay(TxnIdGroup.empty)
+                        _ <- Async[F].delay(newIdGroup.addReadId(analysedTxn.id))
+                        _ <- Async[F].delay(graphBuilder.addOne(rId -> newIdGroup))
+                        _ <- txnGrp.updateId match {
+                          case Some(uid) =>
+                            activeTransactions
+                              .get(uid)
+                              .map(
+                                _.subscribeDownstreamDependency(
+                                  analysedTxn
+                                )
+                              )
+                              .getOrElse(Async[F].unit)
+                          case None =>
+                            Async[F].unit
+                        }
+                      } yield ()
+                    case None =>
+                      for {
+                        newIdGroup <- Async[F].delay(TxnIdGroup.empty)
+                        _ <- Async[F].delay(newIdGroup.addReadId(analysedTxn.id))
+                        _ <- Async[F].delay(graphBuilder.update(rId, newIdGroup))
+                      } yield ()
+                  }
+                case None =>
+                  for {
+                    newIdGroup <- Async[F].delay(TxnIdGroup.empty)
+                    _ <- Async[F].delay(newIdGroup.addReadId(analysedTxn.id))
+                    _ <- Async[F].delay(graphBuilder.update(rId, newIdGroup))
+                  } yield ()
+              }
+          }
+        }.start
+        updateFibre <- validatedClosure.updatedIds.toList.parTraverse { rId =>
+          graphBuilder.get(rId) match {
+            case Some(txnGrp) if txnGrp.readIds.nonEmpty =>
+              for {
+                _ <- Async[F].delay(graphBuilder.update(rId, TxnIdGroup(analysedTxn.id)))
+                _ <- txnGrp.readIds.keys.toList.parTraverse { id =>
+                  activeTransactions.get(id).map(_.subscribeDownstreamDependency(analysedTxn)).getOrElse(Async[F].unit)
+                }.start
+              } yield ()
+            case Some(txnGrp) =>
+              for {
+                _ <- txnGrp.updateId.map(id => activeTransactions.get(id).map(_.subscribeDownstreamDependency(analysedTxn)).getOrElse(Async[F].unit)).getOrElse(Async[F].unit)
+                _ <- Async[F].delay(graphBuilder.update(rId, TxnIdGroup(analysedTxn.id)))
+              } yield ()
+            case None =>
+              rId.parent match {
+                case Some(pRId) =>
+                  graphBuilder.get(pRId) match {
+                    case Some(txnGrp) =>
+                      for {
+                        newIdGroup <- Async[F].delay(TxnIdGroup(analysedTxn.id))
+                        _ <- Async[F].delay(graphBuilder.addOne(rId -> newIdGroup))
+                        _ <- Async[F].ifM(Async[F].delay(txnGrp.readIds.nonEmpty))(
+                          txnGrp.readIds.keys.toList.parTraverse(id =>
+                            activeTransactions.get(id).map(_.subscribeDownstreamDependency(analysedTxn)).getOrElse(Async[F].unit)).start.void,
+                          Async[F].delay(txnGrp.updateId.map(id =>
+                            activeTransactions.get(id).map(_.subscribeDownstreamDependency(analysedTxn)).getOrElse(Async[F].unit))).start.void)
+                      } yield ()
+                    case None =>
+                      for {
+                        newIdGroup <- Async[F].delay(TxnIdGroup(analysedTxn.id))
+                        _ <- Async[F].delay(graphBuilder.update(rId, newIdGroup))
+                      } yield ()
+                  }
+                case None =>
+                  for {
+                    newIdGroup <- Async[F].delay(TxnIdGroup(analysedTxn.id))
+                    _ <- Async[F].delay(graphBuilder.update(rId, newIdGroup))
+                  } yield ()
+              }
+          }
+        }.start
+        _ <- readFibre.joinWithNever
+        _ <- updateFibre.joinWithNever
+        _ <- graphBuilderSemaphore.release
       } yield ()
+
+    private[stm] def submitTxn[V](
+        analysedTxn: => AnalysedTxn[V]
+    ): F[Unit] =
+      Async[F].delay(waitingMap.addOne(analysedTxn.id -> analysedTxn))
 
     private[stm] def submitTxnForImmediateRetry[V](
         analysedTxn: AnalysedTxn[V]
@@ -110,7 +239,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- waitingSemaphore.release
       } yield ()
 
-    private def attemptExecution(
+    private[stm] def attemptExecution(
         analysedTxn: AnalysedTxn[_]
     ): F[Unit] =
       for {
@@ -154,24 +283,26 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                 newClosure <-
                   Async[F].delay(currentClosure.mergeWith(aTxn.idClosure))
               } yield (stillWaiting, newClosure, cycles),
-              Async[F].delay(aTxn :: stillWaiting).map((_, currentClosure, cycles - 1))
+              Async[F]
+                .delay(aTxn :: stillWaiting)
+                .map((_, currentClosure, cycles - 1))
             )
           attemptReprocess <-
             Async[F].ifM(Async[F].delay(waitingBuffer.isEmpty))(
               Async[F].pure(false),
               Async[F].ifM(Async[F].delay(newCycles == -1))(
-                  Async[F].pure(true),
-                  Async[F].ifM(
-                    Async[F].delay(newCycles > maxWaitingToProcessInLoop)
-                  )(
-                    Async[F].pure(false),
-                    Async[F].delay(
-                      closureTallies.getIdClosure.mergeWith(
-                        currentClosure
-                      ) != newClosure
-                    )
+                Async[F].pure(true),
+                Async[F].ifM(
+                  Async[F].delay(newCycles > maxWaitingToProcessInLoop)
+                )(
+                  Async[F].pure(false),
+                  Async[F].delay(
+                    closureTallies.getIdClosure.mergeWith(
+                      currentClosure
+                    ) != newClosure
                   )
                 )
+              )
             )
         } yield (attemptReprocess, newStillWaiting, newCycles + 1)
 
@@ -232,8 +363,49 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       id: TxnId,
       txn: Txn[V],
       idClosure: IdClosure,
-      completionSignal: Deferred[F, Either[Throwable, V]]
+      completionSignal: Deferred[F, Either[Throwable, V]],
+      dependencyTally: Ref[F, Int],
+      unsubSpecs: TrieMap[TxnId, F[Unit]],
+      executionStatus: Ref[F, ExecutionStatus],
+      scheduler: TxnScheduler,
+      statusSemaphore: Semaphore[F]
   ) {
+    private[stm] val resetDependencyTally: F[Unit] =
+      dependencyTally.set(0)
+
+    private[stm] val checkExecutionReadiness: F[Unit] =
+    Async[F].ifM(dependencyTally.get.map(_ <= 0))(
+      scheduler.attemptExecution(this).start.void,
+      Async[F].unit
+    )
+
+    private val unsubscribeUpstreamDependency: F[Unit] =
+      Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ <= 1))(
+        scheduler.attemptExecution(this).start.void,
+        Async[F].unit
+      )
+
+    private val subscribeUpstreamDependency: F[Unit] =
+      dependencyTally.update(_ + 1)
+
+    private[stm] def subscribeDownstreamDependency(
+        txn: AnalysedTxn[_]
+    ): F[Unit] =
+      Async[F].ifM(Async[F].delay(unsubSpecs.keys.toSet.contains(txn.id)))(
+        Async[F].unit,
+        for {
+          _ <- txn.subscribeUpstreamDependency.start
+          _ <-
+            Async[F]
+              .delay(
+                unsubSpecs.addOne(txn.id -> txn.unsubscribeUpstreamDependency)
+              )
+              .start
+        } yield ()
+      )
+
+    private[stm] val triggerUnsub: F[Unit] =
+      unsubSpecs.values.toList.parTraverse(unsubSpec => unsubSpec).void
 
     private[stm] def getTxnLogResult: F[(TxnLog, Option[V])] =
       txn
@@ -359,7 +531,11 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-
           Async[F].delay(
-            AnalysedTxn(id, txn, staticAnalysisResult._1.getCleansed, completionSignal)
+            AnalysedTxn(id,
+                        txn,
+                        staticAnalysisResult._1.getCleansed,
+                        completionSignal
+            )
           )
         _          <- scheduler.submitTxn(analysedTxn).start
         completion <- completionSignal.get
