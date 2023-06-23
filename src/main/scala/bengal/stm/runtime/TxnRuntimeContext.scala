@@ -302,7 +302,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                           poll(ex.submitTxn(this))
                         case TxnResultLogDirty(idClosureRefinement) =>
                           poll {
-                            ex.submitTxnForImmediateRetry(
+                            ex.submitTxn(
                               this.copy(idClosure = idClosureRefinement.getCleansed)
                             )
                           }
