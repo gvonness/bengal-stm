@@ -161,7 +161,7 @@ private[stm] trait TxnLogContext[F[_]] {
 
     override private[stm] lazy val idClosure: F[IdClosure] =
       Async[F].delay(txnVarMap.runtimeId).map { rid =>
-        IdClosure(readIds = Set(), updatedIds = Set(rid))
+        IdClosure(readIds = Set(rid), updatedIds = Set())
       }
   }
 
