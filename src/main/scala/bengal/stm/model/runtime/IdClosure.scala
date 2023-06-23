@@ -27,7 +27,7 @@ private[stm] case class IdClosure(
     if (validated) {
       this
     } else {
-      this.copy(readIds = readIds -- updatedIds, validated = true)
+      this.copy(readIds = (readIds -- updatedIds).filter(id => id.parent.forall(pid => !updateRawIds.contains(pid.value))), validated = true)
     }
 
   private[stm] lazy val combinedIds: Set[TxnVarRuntimeId] =
@@ -36,10 +36,6 @@ private[stm] case class IdClosure(
   private[stm] lazy val combinedRawIds: Set[Int] = combinedIds.map(_.value)
 
   private[stm] lazy val updateRawIds: Set[Int] = updatedIds.map(_.value)
-
-  private[stm] lazy val parentReadIds = readIds.flatMap(_.parent)
-
-  private[stm] lazy val parentUpdateIds = updatedIds.flatMap(_.parent)
 
   private[stm] def addReadId(id: TxnVarRuntimeId): IdClosure =
     this.copy(readIds = readIds + id)

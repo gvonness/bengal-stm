@@ -265,15 +265,15 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                             .delay(TxnResultSuccess(v).asInstanceOf[TxnResult])
                         ).getOrElse(
                           log.idClosure
-                            .map(TxnResultLogDirty(_).asInstanceOf[TxnResult])
+                            .map(closure => TxnResultLogDirty(closure).asInstanceOf[TxnResult])
                         )
                       }
                     case retry @ TxnLogRetry(_) =>
                       Async[F].uncancelable { _ =>
                         retry.validLog.withLock {
                           Async[F].ifM[TxnResult](log.isDirty)(
-                            retry.validLog.idClosure.map(
-                              TxnResultLogDirty(_).asInstanceOf[TxnResult]
+                            retry.validLog.idClosure.map( closure =>
+                              TxnResultLogDirty(closure).asInstanceOf[TxnResult]
                             ),
                             Async[F].delay(TxnResultRetry.asInstanceOf[TxnResult])
                           )
@@ -303,7 +303,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                         case TxnResultLogDirty(idClosureRefinement) =>
                           poll {
                             ex.submitTxnForImmediateRetry(
-                              this.copy(idClosure = idClosureRefinement)
+                              this.copy(idClosure = idClosureRefinement.getCleansed)
                             )
                           }
                         case TxnResultFailure(err) =>
