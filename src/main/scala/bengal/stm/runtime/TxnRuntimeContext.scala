@@ -27,7 +27,6 @@ import cats.effect.{Deferred, Ref}
 import cats.syntax.all._
 
 import scala.collection.mutable.{Map => MutableMap}
-import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.FiniteDuration
 
 private[stm] trait TxnRuntimeContext[F[_]] {
@@ -179,26 +178,39 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       idClosure: IdClosure,
       completionSignal: Deferred[F, Either[Throwable, V]],
       dependencyTally: Ref[F, Int],
-      unsubSpecs: TrieMap[TxnId, F[Unit]],
+      unsubSpecs: MutableMap[TxnId, F[Unit]],
+      unsubSemaphore: Semaphore[F],
       executionStatus: Ref[F, ExecutionStatus]
   ) {
 
     private[stm] val resetDependencyTally: F[Unit] =
-      dependencyTally.set(0)
+      for {
+        _ <- unsubSemaphore.acquire
+        _ <- dependencyTally.set(0)
+        _ <- unsubSemaphore.release
+      } yield ()
 
     private[stm] def checkExecutionReadiness(scheduler: TxnScheduler): F[Unit] =
-      Async[F].ifM(dependencyTally.get.map(_ <= 0))(
-        execute(scheduler).start.void,
-        Async[F].unit
-      )
+      for {
+        _ <- unsubSemaphore.acquire
+        _ <- Async[F].ifM(dependencyTally.get.map(_ <= 0))(
+               execute(scheduler).start.void,
+               Async[F].unit
+             )
+        _ <- unsubSemaphore.release
+      } yield ()
 
     private def unsubscribeUpstreamDependency(
         scheduler: TxnScheduler
     ): F[Unit] =
-      Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ <= 1))(
-        execute(scheduler).start.void,
-        Async[F].unit
-      )
+      for {
+        _ <- unsubSemaphore.acquire
+        _ <- Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ <= 1))(
+               execute(scheduler).start.void,
+               Async[F].unit
+             )
+        _ <- unsubSemaphore.release
+      } yield ()
 
     private val subscribeUpstreamDependency: F[Unit] =
       dependencyTally.update(_ + 1)
@@ -207,30 +219,40 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         txn: AnalysedTxn[_],
         scheduler: TxnScheduler
     ): F[Unit] =
-      Async[F].ifM(Async[F].delay(unsubSpecs.keys.toSet.contains(txn.id)))(
-        Async[F].unit,
-        for {
-          _ <- txn.subscribeUpstreamDependency.start
-          _ <-
-            Async[F]
-              .delay(
-                unsubSpecs.addOne(
-                  txn.id -> txn.unsubscribeUpstreamDependency(scheduler)
-                )
-              )
-        } yield ()
-      )
+      for {
+        _ <- unsubSemaphore.acquire
+        _ <-
+          Async[F].ifM(Async[F].delay(unsubSpecs.keys.toSet.contains(txn.id)))(
+            Async[F].unit,
+            for {
+              _ <- txn.subscribeUpstreamDependency
+              _ <-
+                Async[F]
+                  .delay(
+                    unsubSpecs.addOne(
+                      txn.id -> txn.unsubscribeUpstreamDependency(scheduler)
+                    )
+                  )
+            } yield ()
+          )
+        _ <- unsubSemaphore.release
+      } yield ()
 
     private[stm] val triggerUnsub: F[Unit] =
-      Async[F].ifM(Async[F].delay(unsubSpecs.nonEmpty))(
-        for {
-          _ <- unsubSpecs.values.toList.parTraverse(unsubSpec => unsubSpec).void
-          _ <- unsubSpecs.keys.toList
-                 .parTraverse(id => Async[F].delay(unsubSpecs.remove(id)))
-                 .void
-        } yield (),
-        Async[F].unit
-      )
+      for {
+        _ <- unsubSemaphore.acquire
+        _ <-
+          Async[F].ifM(Async[F].delay(unsubSpecs.nonEmpty))(
+            for {
+              _ <- unsubSpecs.values.toList.parTraverse(unsubSpec => unsubSpec)
+              _ <- unsubSpecs.keys.toList
+                     .parTraverse(id => Async[F].delay(unsubSpecs.remove(id)))
+                     .void
+            } yield (),
+            Async[F].unit
+          )
+        _ <- unsubSemaphore.release
+      } yield ()
 
     private[stm] def getTxnLogResult: F[(TxnLog, Option[V])] =
       txn
@@ -265,17 +287,21 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                             .delay(TxnResultSuccess(v).asInstanceOf[TxnResult])
                         ).getOrElse(
                           log.idClosure
-                            .map(closure => TxnResultLogDirty(closure).asInstanceOf[TxnResult])
+                            .map(closure =>
+                              TxnResultLogDirty(closure).asInstanceOf[TxnResult]
+                            )
                         )
                       }
                     case retry @ TxnLogRetry(_) =>
                       Async[F].uncancelable { _ =>
                         retry.validLog.withLock {
                           Async[F].ifM[TxnResult](log.isDirty)(
-                            retry.validLog.idClosure.map( closure =>
+                            retry.validLog.idClosure.map(closure =>
                               TxnResultLogDirty(closure).asInstanceOf[TxnResult]
                             ),
-                            Async[F].delay(TxnResultRetry.asInstanceOf[TxnResult])
+                            Async[F].delay(
+                              TxnResultRetry.asInstanceOf[TxnResult]
+                            )
                           )
                         }
                       }
@@ -303,7 +329,9 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                         case TxnResultLogDirty(idClosureRefinement) =>
                           poll {
                             ex.submitTxnForImmediateRetry(
-                              this.copy(idClosure = idClosureRefinement.getCleansed)
+                              this.copy(idClosure =
+                                idClosureRefinement.getCleansed
+                              )
                             )
                           }
                         case TxnResultFailure(err) =>
@@ -342,6 +370,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         completionSignal <- Deferred[F, Either[Throwable, V]]
         dependencyTally  <- Ref[F].of(0)
         executionStatus  <- Ref[F].of(NotScheduled.asInstanceOf[ExecutionStatus])
+        unsubSemaphore   <- Semaphore[F](1)
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-
           Async[F].delay(
@@ -351,7 +380,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
               idClosure = staticAnalysisResult._1.getCleansed,
               completionSignal = completionSignal,
               dependencyTally = dependencyTally,
-              unsubSpecs = TrieMap.empty,
+              unsubSpecs = MutableMap(),
+              unsubSemaphore = unsubSemaphore,
               executionStatus = executionStatus
             )
           )
