@@ -144,8 +144,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- graphBuilderSemaphore.acquire
         _ <- Async[F].delay(activeTransactions.remove(analysedTxn.id))
-        _ <- analysedTxn.triggerUnsub
         _ <- graphBuilderSemaphore.release
+        _ <- analysedTxn.triggerUnsub.start
       } yield ()
 
     def registerRunning(analysedTxn: AnalysedTxn[_]): F[Unit] =
