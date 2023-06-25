@@ -323,15 +323,13 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                             Right[Throwable, V](result.asInstanceOf[V])
                           )
                         case TxnResultRetry =>
-                          poll(ex.submitTxn(this))
+                          ex.submitTxn(this)
                         case TxnResultLogDirty(idClosureRefinement) =>
-                          poll {
-                            ex.submitTxnForImmediateRetry(
-                              this.copy(idClosure =
-                                idClosureRefinement.getCleansed
-                              )
+                          ex.submitTxnForImmediateRetry(
+                            this.copy(idClosure =
+                              idClosureRefinement.getCleansed
                             )
-                          }
+                          )
                         case TxnResultFailure(err) =>
                           completionSignal.complete(Left[Throwable, V](err))
                       }
