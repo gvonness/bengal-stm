@@ -177,38 +177,25 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       completionSignal: Deferred[F, Either[Throwable, V]],
       dependencyTally: Ref[F, Int],
       unsubSpecs: MutableMap[TxnId, F[Unit]],
-      unsubSemaphore: Semaphore[F],
       executionStatus: Ref[F, ExecutionStatus]
   ) {
 
     private[stm] val resetDependencyTally: F[Unit] =
-      for {
-        _ <- unsubSemaphore.acquire
-        _ <- dependencyTally.set(0)
-        _ <- unsubSemaphore.release
-      } yield ()
+      dependencyTally.set(0)
 
     private[stm] def checkExecutionReadiness(scheduler: TxnScheduler): F[Unit] =
-      for {
-        _ <- unsubSemaphore.acquire
-        _ <- Async[F].ifM(dependencyTally.get.map(_ <= 0))(
+      Async[F].ifM(dependencyTally.get.map(_ <= 0))(
                execute(scheduler).start.void,
                Async[F].unit
              )
-        _ <- unsubSemaphore.release
-      } yield ()
 
     private def unsubscribeUpstreamDependency(
         scheduler: TxnScheduler
     ): F[Unit] =
-      for {
-        _ <- unsubSemaphore.acquire
-        _ <- Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ <= 1))(
+      Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ <= 1))(
                execute(scheduler).start.void,
                Async[F].unit
              )
-        _ <- unsubSemaphore.release
-      } yield ()
 
     private val subscribeUpstreamDependency: F[Unit] =
       dependencyTally.update(_ + 1)
@@ -217,10 +204,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         txn: AnalysedTxn[_],
         scheduler: TxnScheduler
     ): F[Unit] =
-      for {
-        _ <- unsubSemaphore.acquire
-        _ <-
-          Async[F].ifM(Async[F].delay(unsubSpecs.keys.toSet.contains(txn.id)))(
+      Async[F].ifM(Async[F].delay(unsubSpecs.keys.toSet.contains(txn.id)))(
             Async[F].unit,
             for {
               _ <- txn.subscribeUpstreamDependency
@@ -233,14 +217,9 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                   )
             } yield ()
           )
-        _ <- unsubSemaphore.release
-      } yield ()
 
     private[stm] val triggerUnsub: F[Unit] =
-      for {
-        _ <- unsubSemaphore.acquire
-        _ <-
-          Async[F].ifM(Async[F].delay(unsubSpecs.nonEmpty))(
+      Async[F].ifM(Async[F].delay(unsubSpecs.nonEmpty))(
             for {
               _ <- unsubSpecs.values.toList.parTraverse(unsubSpec => unsubSpec)
               _ <- unsubSpecs.keys.toList
@@ -249,8 +228,6 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             } yield (),
             Async[F].unit
           )
-        _ <- unsubSemaphore.release
-      } yield ()
 
     private[stm] def getTxnLogResult: F[(TxnLog, Option[V])] =
       txn
@@ -366,7 +343,6 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         completionSignal <- Deferred[F, Either[Throwable, V]]
         dependencyTally  <- Ref[F].of(0)
         executionStatus  <- Ref[F].of(NotScheduled.asInstanceOf[ExecutionStatus])
-        unsubSemaphore   <- Semaphore[F](1)
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-
           Async[F].delay(
@@ -377,7 +353,6 @@ private[stm] trait TxnRuntimeContext[F[_]] {
               completionSignal = completionSignal,
               dependencyTally = dependencyTally,
               unsubSpecs = MutableMap(),
-              unsubSemaphore = unsubSemaphore,
               executionStatus = executionStatus
             )
           )
