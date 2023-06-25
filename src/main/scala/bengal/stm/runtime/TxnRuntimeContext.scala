@@ -116,8 +116,6 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                for {
                  status <- aTxn.executionStatus.get
                  _ <- status match {
-                        case NotScheduled =>
-                          Async[F].unit
                         case _ =>
                           Async[F].ifM(
                             Async[F].delay(
