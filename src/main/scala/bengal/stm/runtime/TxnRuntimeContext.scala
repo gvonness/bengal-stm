@@ -64,8 +64,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- analysedTxn.resetDependencyTally
         _ <- graphBuilderSemaphore.acquire
-        _ <- activeTransactions.values.toList.parTraverse { aTxn =>
-               for {
+        testAndLink <- activeTransactions.values.toList.parTraverse { aTxn =>
+          (for {
                  status <- aTxn.executionStatus.get
                  _ <- status match {
                         case Running =>
@@ -97,13 +97,14 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                         case _ =>
                           Async[F].unit
                       }
-               } yield ()
+               } yield ()).start
              }
         _ <- analysedTxn.executionStatus.set(Scheduled)
         _ <-
           Async[F].delay(
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
+        _ <- testAndLink.parTraverse(_.joinWithNever)
         _ <- analysedTxn.checkExecutionReadiness(this)
         _ <- graphBuilderSemaphore.release
       } yield ()
