@@ -136,8 +136,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
           Async[F].delay(
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
+        _ <- analysedTxn.checkExecutionReadiness(this)
         _ <- graphBuilderSemaphore.release
-        _ <- analysedTxn.checkExecutionReadiness(this).start
       } yield ()
 
     def registerCompletion(analysedTxn: AnalysedTxn[_]): F[Unit] =
