@@ -112,30 +112,27 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         _ <- analysedTxn.resetDependencyTally
         _ <- graphBuilderSemaphore.acquire
-        _ <- activeTransactions.values.toList.parTraverse { aTxn =>
-               for {
-                 status <- aTxn.executionStatus.get
-                 _ <- status match {
-                        case _ =>
-                          Async[F].ifM(
-                            Async[F].delay(
-                              analysedTxn.idClosure.isCompatibleWith(
-                                aTxn.idClosure
-                              )
-                            )
-                          )(Async[F].unit,
-                            aTxn.subscribeDownstreamDependency(analysedTxn,
-                                                               this
-                            )
-                          )
-                      }
-               } yield ()
-             }
+        testAndLink <- activeTransactions.values.toList.parTraverse { aTxn =>
+                         Async[F]
+                           .ifM(
+                             Async[F].delay(
+                               analysedTxn.idClosure.isCompatibleWith(
+                                 aTxn.idClosure
+                               )
+                             )
+                           )(Async[F].unit,
+                             aTxn.subscribeDownstreamDependency(analysedTxn,
+                                                                this
+                             )
+                           )
+                           .start
+                       }
         _ <- analysedTxn.executionStatus.set(Scheduled)
         _ <-
           Async[F].delay(
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
+        _ <- testAndLink.parTraverse(_.joinWithNever)
         _ <- analysedTxn.checkExecutionReadiness(this)
         _ <- graphBuilderSemaphore.release
       } yield ()
@@ -184,18 +181,18 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       dependencyTally.set(0)
 
     private[stm] def checkExecutionReadiness(scheduler: TxnScheduler): F[Unit] =
-      Async[F].ifM(dependencyTally.get.map(_ <= 0))(
-               execute(scheduler).start.void,
-               Async[F].unit
-             )
+      Async[F].ifM(dependencyTally.get.map(_ == 0))(
+        execute(scheduler).start.void,
+        Async[F].unit
+      )
 
     private def unsubscribeUpstreamDependency(
         scheduler: TxnScheduler
     ): F[Unit] =
-      Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ <= 1))(
-               execute(scheduler).start.void,
-               Async[F].unit
-             )
+      Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ == 1))(
+        execute(scheduler).start.void,
+        Async[F].unit
+      )
 
     private val subscribeUpstreamDependency: F[Unit] =
       dependencyTally.update(_ + 1)
@@ -205,29 +202,29 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         scheduler: TxnScheduler
     ): F[Unit] =
       Async[F].ifM(Async[F].delay(unsubSpecs.keys.toSet.contains(txn.id)))(
-            Async[F].unit,
-            for {
-              _ <- txn.subscribeUpstreamDependency
-              _ <-
-                Async[F]
-                  .delay(
-                    unsubSpecs.addOne(
-                      txn.id -> txn.unsubscribeUpstreamDependency(scheduler)
-                    )
-                  )
-            } yield ()
-          )
+        Async[F].unit,
+        for {
+          _ <- txn.subscribeUpstreamDependency
+          _ <-
+            Async[F]
+              .delay(
+                unsubSpecs.addOne(
+                  txn.id -> txn.unsubscribeUpstreamDependency(scheduler)
+                )
+              )
+        } yield ()
+      )
 
     private[stm] val triggerUnsub: F[Unit] =
       Async[F].ifM(Async[F].delay(unsubSpecs.nonEmpty))(
-            for {
-              _ <- unsubSpecs.values.toList.parTraverse(unsubSpec => unsubSpec)
-              _ <- unsubSpecs.keys.toList
-                     .parTraverse(id => Async[F].delay(unsubSpecs.remove(id)))
-                     .void
-            } yield (),
-            Async[F].unit
-          )
+        for {
+          _ <- unsubSpecs.values.toList.parTraverse(unsubSpec => unsubSpec)
+          _ <- unsubSpecs.keys.toList
+                 .parTraverse(id => Async[F].delay(unsubSpecs.remove(id)))
+                 .void
+        } yield (),
+        Async[F].unit
+      )
 
     private[stm] def getTxnLogResult: F[(TxnLog, Option[V])] =
       txn
