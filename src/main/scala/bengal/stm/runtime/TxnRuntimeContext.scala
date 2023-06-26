@@ -105,8 +105,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
         _ <- testAndLink.parTraverse(_.joinWithNever)
-        _ <- graphBuilderSemaphore.release
         _ <- analysedTxn.checkExecutionReadiness(this)
+        _ <- graphBuilderSemaphore.release
       } yield ()
 
     def submitTxn(analysedTxn: AnalysedTxn[_]): F[Unit] =
@@ -134,8 +134,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
         _ <- testAndLink.parTraverse(_.joinWithNever)
-        _ <- graphBuilderSemaphore.release
         _ <- analysedTxn.checkExecutionReadiness(this)
+        _ <- graphBuilderSemaphore.release
       } yield ()
 
     def registerCompletion(analysedTxn: AnalysedTxn[_]): F[Unit] =
