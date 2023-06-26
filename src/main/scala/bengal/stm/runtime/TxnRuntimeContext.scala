@@ -77,9 +77,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                             )
                           )(
                             Async[F].unit,
-                            aTxn.subscribeDownstreamDependency(analysedTxn,
-                                                               this
-                            )
+                            aTxn.subscribeDownstreamDependency(analysedTxn)
                           )
                         case Scheduled =>
                           Async[F].ifM(
@@ -90,9 +88,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                             )
                           )(
                             Async[F].unit,
-                            analysedTxn.subscribeDownstreamDependency(aTxn,
-                                                                      this
-                            )
+                            analysedTxn.subscribeDownstreamDependency(aTxn)
                           )
                         case _ =>
                           Async[F].unit
@@ -105,7 +101,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
         _ <- testAndLink.parTraverse(_.joinWithNever)
-        _ <- analysedTxn.checkExecutionReadiness(this)
+        _ <- analysedTxn.checkExecutionReadiness
         _ <- graphBuilderSemaphore.release
       } yield ()
 
@@ -122,9 +118,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                                )
                              )
                            )(Async[F].unit,
-                             aTxn.subscribeDownstreamDependency(analysedTxn,
-                                                                this
-                             )
+                             aTxn.subscribeDownstreamDependency(analysedTxn)
                            )
                            .start
                        }
@@ -134,7 +128,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
         _ <- testAndLink.parTraverse(_.joinWithNever)
-        _ <- analysedTxn.checkExecutionReadiness(this)
+        _ <- analysedTxn.checkExecutionReadiness
         _ <- graphBuilderSemaphore.release
       } yield ()
 
@@ -175,21 +169,20 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       completionSignal: Deferred[F, Either[Throwable, V]],
       dependencyTally: Ref[F, Int],
       unsubSpecs: MutableMap[TxnId, F[Unit]],
-      executionStatus: Ref[F, ExecutionStatus]
+      executionStatus: Ref[F, ExecutionStatus],
+      scheduler: TxnScheduler
   ) {
 
     private[stm] val resetDependencyTally: F[Unit] =
       dependencyTally.set(0)
 
-    private[stm] def checkExecutionReadiness(scheduler: TxnScheduler): F[Unit] =
+    private[stm] val checkExecutionReadiness: F[Unit] =
       Async[F].ifM(dependencyTally.get.map(_ == 0))(
         execute(scheduler).start.void,
         Async[F].unit
       )
 
-    private def unsubscribeUpstreamDependency(
-        scheduler: TxnScheduler
-    ): F[Unit] =
+    private val unsubscribeUpstreamDependency: F[Unit] =
       Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ == 1))(
         execute(scheduler).start.void,
         Async[F].unit
@@ -199,8 +192,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       dependencyTally.update(_ + 1)
 
     private[stm] def subscribeDownstreamDependency(
-        txn: AnalysedTxn[_],
-        scheduler: TxnScheduler
+        txn: AnalysedTxn[_]
     ): F[Unit] =
       Async[F].ifM(Async[F].delay(unsubSpecs.keys.toSet.contains(txn.id)))(
         Async[F].unit,
@@ -210,7 +202,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             Async[F]
               .delay(
                 unsubSpecs.addOne(
-                  txn.id -> txn.unsubscribeUpstreamDependency(scheduler)
+                  txn.id -> txn.unsubscribeUpstreamDependency
                 )
               )
         } yield ()
@@ -349,7 +341,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
               completionSignal = completionSignal,
               dependencyTally = dependencyTally,
               unsubSpecs = MutableMap(),
-              executionStatus = executionStatus
+              executionStatus = executionStatus,
+              scheduler = scheduler
             )
           )
         _          <- scheduler.submitTxn(analysedTxn).start

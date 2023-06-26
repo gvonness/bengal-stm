@@ -27,7 +27,11 @@ private[stm] case class IdClosure(
     if (validated) {
       this
     } else {
-      this.copy(readIds = (readIds -- updatedIds).filter(id => id.parent.forall(pid => !updateRawIds.contains(pid.value))), validated = true)
+      this.copy(readIds = (readIds -- updatedIds).filter(id =>
+                  id.parent.forall(pid => !updateRawIds.contains(pid.value))
+                ),
+                validated = true
+      )
     }
 
   private[stm] lazy val combinedIds: Set[TxnVarRuntimeId] =
@@ -49,7 +53,9 @@ private[stm] case class IdClosure(
     )
 
   private def asymmetricCompatibleWith(input: IdClosure): Boolean =
-    combinedRawIds.intersect(input.updateRawIds).isEmpty && !combinedIds.exists(_.parent.exists(p => input.updateRawIds.contains(p.value)))
+    combinedRawIds.intersect(input.updateRawIds).isEmpty && !combinedIds.exists(
+      _.parent.exists(p => input.updateRawIds.contains(p.value))
+    )
 
   private[stm] def isCompatibleWith(input: IdClosure): Boolean =
     asymmetricCompatibleWith(input) && input.asymmetricCompatibleWith(this)
