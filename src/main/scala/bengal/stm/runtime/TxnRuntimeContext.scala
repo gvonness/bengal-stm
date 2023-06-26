@@ -105,8 +105,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
         _ <- testAndLink.parTraverse(_.joinWithNever)
-        _ <- analysedTxn.checkExecutionReadiness(this)
         _ <- graphBuilderSemaphore.release
+        _ <- analysedTxn.checkExecutionReadiness(this)
       } yield ()
 
     def submitTxn(analysedTxn: AnalysedTxn[_]): F[Unit] =
@@ -134,8 +134,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             activeTransactions.addOne(analysedTxn.id -> analysedTxn)
           )
         _ <- testAndLink.parTraverse(_.joinWithNever)
-        _ <- analysedTxn.checkExecutionReadiness(this)
         _ <- graphBuilderSemaphore.release
+        _ <- analysedTxn.checkExecutionReadiness(this)
       } yield ()
 
     def registerCompletion(analysedTxn: AnalysedTxn[_]): F[Unit] =
@@ -183,7 +183,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
 
     private[stm] def checkExecutionReadiness(scheduler: TxnScheduler): F[Unit] =
       Async[F].ifM(dependencyTally.get.map(_ == 0))(
-        execute(scheduler).start.void,
+        execute(scheduler),
         Async[F].unit
       )
 
@@ -191,7 +191,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         scheduler: TxnScheduler
     ): F[Unit] =
       Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ == 1))(
-        execute(scheduler).start.void,
+        execute(scheduler),
         Async[F].unit
       )
 
@@ -220,9 +220,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       Async[F].ifM(Async[F].delay(unsubSpecs.nonEmpty))(
         for {
           _ <- unsubSpecs.values.toList.parTraverse(unsubSpec => unsubSpec)
-          _ <- unsubSpecs.keys.toList
-                 .parTraverse(id => Async[F].delay(unsubSpecs.remove(id)))
-                 .void
+          _ <- Async[F].delay(unsubSpecs.clear())
         } yield (),
         Async[F].unit
       )
