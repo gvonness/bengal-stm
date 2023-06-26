@@ -43,7 +43,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
 
   private[stm] case object TxnResultRetry extends TxnResult
 
-  private[stm] case class TxnResultLogDirty(idClosureRefinement: IdClosure)
+  private[stm] case class TxnResultLogDirty(idFootprintRefinement: IdFootprint)
       extends TxnResult
 
   private[stm] case class TxnResultFailure(ex: Throwable) extends TxnResult
@@ -65,36 +65,42 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- analysedTxn.resetDependencyTally
         _ <- graphBuilderSemaphore.acquire
         testAndLink <- activeTransactions.values.toList.parTraverse { aTxn =>
-          (for {
-                 status <- aTxn.executionStatus.get
-                 _ <- status match {
-                        case Running =>
-                          Async[F].ifM(
-                            Async[F].delay(
-                              analysedTxn.idClosure.isCompatibleWith(
-                                aTxn.idClosure
-                              )
-                            )
-                          )(
-                            Async[F].unit,
-                            aTxn.subscribeDownstreamDependency(analysedTxn)
-                          )
-                        case Scheduled =>
-                          Async[F].ifM(
-                            Async[F].delay(
-                              analysedTxn.idClosure.isCompatibleWith(
-                                aTxn.idClosure
-                              )
-                            )
-                          )(
-                            Async[F].unit,
-                            analysedTxn.subscribeDownstreamDependency(aTxn)
-                          )
-                        case _ =>
-                          Async[F].unit
-                      }
-               } yield ()).start
-             }
+                         (for {
+                           status <- aTxn.executionStatus.get
+                           _ <- status match {
+                                  case Running =>
+                                    Async[F].ifM(
+                                      Async[F].delay(
+                                        analysedTxn.idFootprint
+                                          .isCompatibleWith(
+                                            aTxn.idFootprint
+                                          )
+                                      )
+                                    )(
+                                      Async[F].unit,
+                                      aTxn.subscribeDownstreamDependency(
+                                        analysedTxn
+                                      )
+                                    )
+                                  case Scheduled =>
+                                    Async[F].ifM(
+                                      Async[F].delay(
+                                        analysedTxn.idFootprint
+                                          .isCompatibleWith(
+                                            aTxn.idFootprint
+                                          )
+                                      )
+                                    )(
+                                      Async[F].unit,
+                                      analysedTxn.subscribeDownstreamDependency(
+                                        aTxn
+                                      )
+                                    )
+                                  case _ =>
+                                    Async[F].unit
+                                }
+                         } yield ()).start
+                       }
         _ <- analysedTxn.executionStatus.set(Scheduled)
         _ <-
           Async[F].delay(
@@ -113,8 +119,8 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                          Async[F]
                            .ifM(
                              Async[F].delay(
-                               analysedTxn.idClosure.isCompatibleWith(
-                                 aTxn.idClosure
+                               analysedTxn.idFootprint.isCompatibleWith(
+                                 aTxn.idFootprint
                                )
                              )
                            )(Async[F].unit,
@@ -165,7 +171,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
   private[stm] case class AnalysedTxn[V](
       id: TxnId,
       txn: Txn[V],
-      idClosure: IdClosure,
+      idFootprint: IdFootprint,
       completionSignal: Deferred[F, Either[Throwable, V]],
       dependencyTally: Ref[F, Int],
       unsubSpecs: MutableMap[TxnId, F[Unit]],
@@ -249,9 +255,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                           Async[F]
                             .delay(TxnResultSuccess(v).asInstanceOf[TxnResult])
                         ).getOrElse(
-                          log.idClosure
-                            .map(closure =>
-                              TxnResultLogDirty(closure).asInstanceOf[TxnResult]
+                          log.idFootprint
+                            .map(footprint =>
+                              TxnResultLogDirty(footprint)
+                                .asInstanceOf[TxnResult]
                             )
                         )
                       }
@@ -259,8 +266,9 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                       Async[F].uncancelable { _ =>
                         retry.validLog.withLock {
                           Async[F].ifM[TxnResult](log.isDirty)(
-                            retry.validLog.idClosure.map(closure =>
-                              TxnResultLogDirty(closure).asInstanceOf[TxnResult]
+                            retry.validLog.idFootprint.map(footprint =>
+                              TxnResultLogDirty(footprint)
+                                .asInstanceOf[TxnResult]
                             ),
                             Async[F].delay(
                               TxnResultRetry.asInstanceOf[TxnResult]
@@ -289,10 +297,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                           )
                         case TxnResultRetry =>
                           ex.submitTxn(this)
-                        case TxnResultLogDirty(idClosureRefinement) =>
+                        case TxnResultLogDirty(idFootprintRefinement) =>
                           ex.submitTxnForImmediateRetry(
-                            this.copy(idClosure =
-                              idClosureRefinement.getCleansed
+                            this.copy(idFootprint =
+                              idFootprintRefinement.getValidated
                             )
                           )
                         case TxnResultFailure(err) =>
@@ -311,22 +319,22 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       for {
         staticAnalysisResult <-
           txn
-            .foldMap[IdClosureStore](staticAnalysisCompiler)
-            .run(IdClosure.empty)
+            .foldMap[IdFootprintStore](staticAnalysisCompiler)
+            .run(IdFootprint.empty)
             .map { res =>
               (res._1, Option(res._2))
             }
             // Sometimes the static analysis will unavoidably throw
             // due to impossible casts being attempted. In this case, we
-            // leverage the closure gathered to the point in the free recursion
+            // leverage the footprint gathered to the point in the free recursion
             // up to where the error is generated. In the worst case,
             // we fall back to blindly optimistic scheduling (for the
             // first transaction attempt)
             .handleErrorWith {
-              case StaticAnalysisShortCircuitException(idClosure) =>
-                Async[F].delay((idClosure, None))
+              case StaticAnalysisShortCircuitException(idFootprint) =>
+                Async[F].delay((idFootprint, None))
               case _ =>
-                Async[F].pure((IdClosure.empty, None))
+                Async[F].pure((IdFootprint.empty, None))
             }
         completionSignal <- Deferred[F, Either[Throwable, V]]
         dependencyTally  <- Ref[F].of(0)
@@ -337,7 +345,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             AnalysedTxn(
               id = id,
               txn = txn,
-              idClosure = staticAnalysisResult._1.getCleansed,
+              idFootprint = staticAnalysisResult._1.getValidated,
               completionSignal = completionSignal,
               dependencyTally = dependencyTally,
               unsubSpecs = MutableMap(),

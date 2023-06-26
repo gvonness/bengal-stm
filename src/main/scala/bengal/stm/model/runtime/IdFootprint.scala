@@ -17,20 +17,20 @@
 package ai.entrolution
 package bengal.stm.model.runtime
 
-private[stm] case class IdClosure(
+private[stm] case class IdFootprint(
     readIds: Set[TxnVarRuntimeId],
     updatedIds: Set[TxnVarRuntimeId],
-    validated: Boolean = false
+    isValidated: Boolean = false
 ) {
 
-  private[stm] lazy val getCleansed =
-    if (validated) {
+  private[stm] lazy val getValidated =
+    if (isValidated) {
       this
     } else {
       this.copy(readIds = (readIds -- updatedIds).filter(id =>
                   id.parent.forall(pid => !updateRawIds.contains(pid.value))
                 ),
-                validated = true
+                isValidated = true
       )
     }
 
@@ -41,26 +41,26 @@ private[stm] case class IdClosure(
 
   private[stm] lazy val updateRawIds: Set[Int] = updatedIds.map(_.value)
 
-  private[stm] def addReadId(id: TxnVarRuntimeId): IdClosure =
+  private[stm] def addReadId(id: TxnVarRuntimeId): IdFootprint =
     this.copy(readIds = readIds + id)
 
-  private[stm] def addWriteId(id: TxnVarRuntimeId): IdClosure =
+  private[stm] def addWriteId(id: TxnVarRuntimeId): IdFootprint =
     this.copy(updatedIds = updatedIds + id)
 
-  private[stm] def mergeWith(idScope: IdClosure): IdClosure =
+  private[stm] def mergeWith(idScope: IdFootprint): IdFootprint =
     this.copy(readIds = readIds ++ idScope.readIds,
               updatedIds = updatedIds ++ idScope.updatedIds
     )
 
-  private def asymmetricCompatibleWith(input: IdClosure): Boolean =
+  private def asymmetricCompatibleWith(input: IdFootprint): Boolean =
     combinedRawIds.intersect(input.updateRawIds).isEmpty && !combinedIds.exists(
       _.parent.exists(p => input.updateRawIds.contains(p.value))
     )
 
-  private[stm] def isCompatibleWith(input: IdClosure): Boolean =
+  private[stm] def isCompatibleWith(input: IdFootprint): Boolean =
     asymmetricCompatibleWith(input) && input.asymmetricCompatibleWith(this)
 }
 
-private[stm] object IdClosure {
-  private[stm] val empty: IdClosure = IdClosure(Set(), Set())
+private[stm] object IdFootprint {
+  private[stm] val empty: IdFootprint = IdFootprint(Set(), Set())
 }

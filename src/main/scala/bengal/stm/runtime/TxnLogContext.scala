@@ -37,7 +37,7 @@ private[stm] trait TxnLogContext[F[_]] {
     private[stm] def commit: F[Unit]
     private[stm] def isDirty: F[Boolean]
     private[stm] def lock: F[Option[Semaphore[F]]]
-    private[stm] def idClosure: F[IdClosure]
+    private[stm] def idFootprint: F[IdFootprint]
 
   }
 
@@ -73,9 +73,9 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].pure(None)
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
       Async[F].delay(txnVar.runtimeId).map { rid =>
-        IdClosure(readIds = Set(rid), updatedIds = Set())
+        IdFootprint(readIds = Set(rid), updatedIds = Set())
       }
   }
 
@@ -111,9 +111,9 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].delay(Some(txnVar.commitLock))
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
       Async[F].delay(txnVar.runtimeId).map { rid =>
-        IdClosure(readIds = Set(), updatedIds = Set(rid))
+        IdFootprint(readIds = Set(), updatedIds = Set(rid))
       }
   }
 
@@ -146,9 +146,9 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].pure(None)
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
       Async[F].delay(txnVarMap.runtimeId).map { rid =>
-        IdClosure(readIds = Set(rid), updatedIds = Set())
+        IdFootprint(readIds = Set(rid), updatedIds = Set())
       }
   }
 
@@ -184,9 +184,9 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].delay(Some(txnVarMap.commitLock))
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
       Async[F].delay(txnVarMap.runtimeId).map { rid =>
-        IdClosure(readIds = Set(), updatedIds = Set(rid))
+        IdFootprint(readIds = Set(), updatedIds = Set(rid))
       }
   }
 
@@ -221,9 +221,9 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].pure(None)
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
       txnVarMap.getRuntimeId(key).map { rid =>
-        IdClosure(
+        IdFootprint(
           readIds = Set(rid),
           updatedIds = Set()
         )
@@ -278,9 +278,9 @@ private[stm] trait TxnLogContext[F[_]] {
         oTxnVar <- txnVarMap.getTxnVar(key)
       } yield oTxnVar.map(_.commitLock)
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
       txnVarMap.getRuntimeId(key).map { rid =>
-        IdClosure(
+        IdFootprint(
           readIds = Set(),
           updatedIds = Set(rid)
         )
@@ -359,7 +359,7 @@ private[stm] trait TxnLogContext[F[_]] {
 
     private[stm] def commit: F[Unit]
 
-    private[stm] def idClosure: F[IdClosure]
+    private[stm] def idFootprint: F[IdFootprint]
 
     private[stm] def withLock[A](fa: F[A]): F[A] =
       fa
@@ -1169,9 +1169,9 @@ private[stm] trait TxnLogContext[F[_]] {
       } yield result
     }
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
       log.values.toList.parTraverse { entry =>
-        entry.idClosure
+        entry.idFootprint
       }.map(_.reduce(_ mergeWith _))
 
     override private[stm] def withLock[A](fa: F[A]): F[A] =
@@ -1239,8 +1239,8 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val commit: F[Unit] =
       Async[F].unit
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
-      Async[F].pure(IdClosure.empty)
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
+      Async[F].pure(IdFootprint.empty)
   }
 
   private[stm] case class TxnLogError(ex: Throwable) extends TxnLog {
@@ -1259,8 +1259,8 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val commit: F[Unit] =
       Async[F].unit
 
-    override private[stm] lazy val idClosure: F[IdClosure] =
-      Async[F].pure(IdClosure.empty)
+    override private[stm] lazy val idFootprint: F[IdFootprint] =
+      Async[F].pure(IdFootprint.empty)
   }
 
   private[stm] case class TxnRetryException(validLog: TxnLogValid)
