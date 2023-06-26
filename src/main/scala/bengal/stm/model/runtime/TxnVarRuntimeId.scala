@@ -15,10 +15,13 @@
  */
 
 package ai.entrolution
-package bengal.stm.model
+package bengal.stm.model.runtime
 
-import cats.effect.kernel.Async
+private[stm] case class TxnVarRuntimeId(
+    value: Int,
+    parent: Option[TxnVarRuntimeId] = None
+) {
 
-private[stm] abstract class AsyncImplicits[F[_]](
-    protected implicit val asyncF: Async[F]
-)
+  private[stm] def addParent(parent: TxnVarRuntimeId): TxnVarRuntimeId =
+    this.copy(parent = Some(parent))
+}

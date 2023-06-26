@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Greg von Nessi
+ * Copyright 2020-2023 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,11 @@
 package ai.entrolution
 package bengal.stm.model
 
-import cats.effect.{Deferred, Ref}
-
 import scala.collection.mutable.{Map => MutableMap}
 
 package object runtime {
   private[stm] type TxnVarId        = Long
-  private[stm] type TxnVarRuntimeId = Int
   private[stm] type TxnId           = Long
 
   private[stm] type VarIndex[F[_], K, V] = MutableMap[K, TxnVar[F, V]]
-  private[stm] type TxnSignals[F[_]]     = Ref[F, Set[Deferred[F, Unit]]]
 }

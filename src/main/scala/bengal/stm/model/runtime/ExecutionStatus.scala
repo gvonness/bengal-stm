@@ -15,10 +15,10 @@
  */
 
 package ai.entrolution
-package bengal.stm.model
+package bengal.stm.model.runtime
 
-import cats.effect.kernel.Async
+sealed trait ExecutionStatus
 
-private[stm] abstract class AsyncImplicits[F[_]](
-    protected implicit val asyncF: Async[F]
-)
+case object Scheduled extends ExecutionStatus
+case object Running extends ExecutionStatus
+case object NotScheduled extends ExecutionStatus

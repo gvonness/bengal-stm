@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Greg von Nessi
+ * Copyright 2020-2023 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,7 @@ import bengal.stm.model.runtime._
 import bengal.stm.runtime.{TxnCompilerContext, TxnLogContext, TxnRuntimeContext}
 
 import cats.effect.Ref
-import cats.effect.implicits.genSpawnOps
-import cats.effect.kernel.{Async, Deferred}
+import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
 import cats.implicits._
 
@@ -94,21 +93,15 @@ object STM {
     stm
 
   def runtime[F[_]: Async]: F[STM[F]] =
-    runtime(FiniteDuration(Long.MaxValue, NANOSECONDS),
-            Runtime.getRuntime.availableProcessors() * 2
-    )
+    runtime(FiniteDuration(Long.MaxValue, NANOSECONDS))
 
   def runtime[F[_]: Async](
-      retryMaxWait: FiniteDuration,
-      maxWaitingToProcessInLoop: Int
+      retryMaxWait: FiniteDuration
   ): F[STM[F]] =
     for {
       idGenVar            <- Ref.of[F, Long](0)
       idGenTxn            <- Ref.of[F, Long](0)
-      runningSemaphore    <- Semaphore[F](1)
-      waitingSemaphore    <- Semaphore[F](1)
-      schedulerTrigger    <- Deferred[F, Unit]
-      schedulerTriggerRef <- Ref.of(schedulerTrigger)
+      graphBuilderSemaphore    <- Semaphore[F](1)
       stm <- Async[F].delay {
                new STM[F] {
                  override val txnVarIdGen: Ref[F, TxnVarId] = idGenVar
@@ -117,11 +110,8 @@ object STM {
                  val txnRuntime: TxnRuntime = new TxnRuntime {
                    override val scheduler: TxnScheduler =
                      TxnScheduler(
-                       runningSemaphore,
-                       waitingSemaphore,
-                       schedulerTriggerRef,
-                       retryMaxWait,
-                       maxWaitingToProcessInLoop
+                       graphBuilderSemaphore = graphBuilderSemaphore,
+                       retryWaitMaxDuration = retryMaxWait
                      )
                  }
 
@@ -137,6 +127,5 @@ object STM {
                    txnRuntime.commit(txn)
                }
              }
-      _ <- stm.txnRuntime.scheduler.reprocessingRecursion.start
     } yield stm
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Greg von Nessi
+ * Copyright 2020-2023 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,9 @@ package bengal.stm.model
 import bengal.stm.STM
 import bengal.stm.model.runtime._
 
+import cats.effect.Ref
 import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
-import cats.effect.{Deferred, Ref}
 import cats.syntax.all._
 
 import java.util.UUID
@@ -34,14 +34,7 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
     private[stm] val commitLock: Semaphore[F],
     private val internalStructureLock: Semaphore[F],
     private val internalSignalLock: Semaphore[F],
-    private[stm] val txnRetrySignals: TxnSignals[F]
 ) extends TxnStateEntity[F, VarIndex[F, K, V]] {
-
-  private def completeRetrySignals: F[Unit] =
-    for {
-      signals <- txnRetrySignals.getAndSet(Set())
-      _       <- signals.toList.traverse(_.complete(()))
-    } yield ()
 
   private def withLock[A](semaphore: Semaphore[F])(
       fa: F[A]
@@ -72,32 +65,13 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
                 }
     } yield result
 
-  private[stm] def getId(key: K): F[Option[TxnVarId]] =
-    getTxnVar(key).map(_.map(_.id))
-
-  private[stm] def getRuntimeExistentialId(key: K): TxnVarRuntimeId =
-    UUID.nameUUIDFromBytes((id, key).toString.getBytes).hashCode()
-
-  private[stm] def getRuntimeActualisedId(
-      key: K
-  ): F[Option[TxnVarRuntimeId]] =
-    getTxnVar(key).map(_.map(_.runtimeId))
+  private def getRuntimeExistentialId(key: K): TxnVarRuntimeId =
+    TxnVarRuntimeId(UUID.nameUUIDFromBytes((id, key).toString.getBytes).hashCode())
 
   private[stm] def getRuntimeId(
       key: K
-  ): F[List[TxnVarRuntimeId]] =
-    getRuntimeActualisedId(key).map(
-      List(_, Some(getRuntimeExistentialId(key))).flatten
-    )
-
-  // Get transactional IDs for any keys already existing
-  // in the map
-  private[stm] def getIdsForKeys(
-      keySet: Set[K]
-  ): F[Set[TxnVarId]] =
-    for {
-      ids <- keySet.toList.traverse(getId)
-    } yield ids.flatten.toSet
+  ): F[TxnVarRuntimeId] =
+    Async[F].delay(getRuntimeExistentialId(key).addParent(runtimeId))
 
   // Only called when key is known to not exist
   private def add(newKey: K, newValue: V): F[Unit] =
@@ -106,7 +80,6 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
       _ <- withLock(internalStructureLock)(
              value.update(_ += (newKey -> newTxnVar))
            )
-      _ <- completeRetrySignals
     } yield ()
 
   private[stm] def addOrUpdate(key: K, newValue: V): F[Unit] =
@@ -116,7 +89,7 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
              case Some(tVar) =>
                withLock(internalStructureLock)(
                  tVar.set(newValue)
-               ) >> completeRetrySignals
+               )
              case None =>
                add(key, newValue)
            }
@@ -126,21 +99,12 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
     for {
       txnVarMap <- value.get
       _ <- txnVarMap.get(key) match {
-             case Some(txnVar) =>
-               for {
-                 _ <- withLock(internalStructureLock)(value.update(_ -= key))
-                 _ <- txnVar.completeRetrySignals
-                 _ <- completeRetrySignals
-               } yield ()
+             case Some(_) =>
+               withLock(internalStructureLock)(value.update(_ -= key))
              case None =>
                Async[F].unit
            }
     } yield ()
-
-  private[stm] override def registerRetry(
-      signal: Deferred[F, Unit]
-  ): F[Unit] =
-    withLock(internalSignalLock)(txnRetrySignals.update(_ + signal))
 }
 
 object TxnVarMap {
@@ -155,12 +119,10 @@ object TxnVarMap {
       lock                  <- Semaphore[F](1)
       internalStructureLock <- Semaphore[F](1)
       internalSignalLock    <- Semaphore[F](1)
-      signals               <- Async[F].ref(Set[Deferred[F, Unit]]())
     } yield TxnVarMap(id,
                       valuesRef,
                       lock,
                       internalStructureLock,
-                      internalSignalLock,
-                      signals
+                      internalSignalLock
     )
 }
