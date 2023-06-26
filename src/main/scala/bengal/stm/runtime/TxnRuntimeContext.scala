@@ -183,7 +183,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
 
     private[stm] def checkExecutionReadiness(scheduler: TxnScheduler): F[Unit] =
       Async[F].ifM(dependencyTally.get.map(_ == 0))(
-        execute(scheduler),
+        execute(scheduler).start.void,
         Async[F].unit
       )
 
@@ -191,7 +191,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         scheduler: TxnScheduler
     ): F[Unit] =
       Async[F].ifM(dependencyTally.getAndUpdate(_ - 1).map(_ == 1))(
-        execute(scheduler),
+        execute(scheduler).start.void,
         Async[F].unit
       )
 
