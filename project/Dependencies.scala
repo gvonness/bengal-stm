@@ -1,7 +1,7 @@
 import sbt._
 
 object DependencyVersions {
-  val scala2p13Version = "2.13.8"
+  val scala2p13Version = "2.13.11"
 
   val catsEffectVersion = "3.4.8"
   val catsFreeVersion   = "2.9.0"

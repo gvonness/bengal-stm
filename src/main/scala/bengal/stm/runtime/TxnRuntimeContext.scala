@@ -27,7 +27,6 @@ import cats.effect.{Deferred, Ref}
 import cats.syntax.all._
 
 import scala.collection.mutable.{Map => MutableMap}
-import scala.concurrent.duration.FiniteDuration
 
 private[stm] trait TxnRuntimeContext[F[_]] {
   this: AsyncImplicits[F]
@@ -56,8 +55,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
 
   private[stm] case class TxnScheduler(
       graphBuilderSemaphore: Semaphore[F],
-      activeTransactions: MutableMap[TxnId, AnalysedTxn[_]],
-      retryWaitMaxDuration: FiniteDuration
+      activeTransactions: MutableMap[TxnId, AnalysedTxn[_]]
   ) {
 
     def submitTxnForImmediateRetry(analysedTxn: AnalysedTxn[_]): F[Unit] =
@@ -157,13 +155,11 @@ private[stm] trait TxnRuntimeContext[F[_]] {
   private[stm] object TxnScheduler {
 
     private[stm] def apply(
-        graphBuilderSemaphore: Semaphore[F],
-        retryWaitMaxDuration: FiniteDuration
+        graphBuilderSemaphore: Semaphore[F]
     ): TxnScheduler =
       TxnScheduler(
         activeTransactions = MutableMap(),
-        graphBuilderSemaphore = graphBuilderSemaphore,
-        retryWaitMaxDuration = retryWaitMaxDuration
+        graphBuilderSemaphore = graphBuilderSemaphore
       )
 
   }

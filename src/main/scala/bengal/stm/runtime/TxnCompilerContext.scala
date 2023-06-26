@@ -26,6 +26,8 @@ import cats.data.StateT
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
+import scala.annotation.nowarn
+
 private[stm] trait TxnCompilerContext[F[_]] {
   this: AsyncImplicits[F] with TxnLogContext[F] with TxnAdtContext[F] =>
 
@@ -43,6 +45,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
       : FunctionK[TxnOrErr, IdFootprintStore] =
     new (FunctionK[TxnOrErr, IdFootprintStore]) {
 
+      @nowarn
       def apply[V](fa: TxnOrErr[V]): IdFootprintStore[V] =
         fa match {
           case Right(entry) =>
@@ -165,6 +168,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
   private[stm] lazy val txnLogCompiler: FunctionK[TxnOrErr, TxnLogStore] =
     new (FunctionK[TxnOrErr, TxnLogStore]) {
 
+      @nowarn
       def apply[V](fa: TxnOrErr[V]): TxnLogStore[V] =
         fa match {
           case Right(entry) =>

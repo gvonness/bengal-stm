@@ -27,8 +27,6 @@ import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
 import cats.implicits._
 
-import scala.concurrent.duration.{FiniteDuration, NANOSECONDS}
-
 abstract class STM[F[_]: Async]
     extends AsyncImplicits[F]
     with TxnRuntimeContext[F]
@@ -93,15 +91,10 @@ object STM {
     stm
 
   def runtime[F[_]: Async]: F[STM[F]] =
-    runtime(FiniteDuration(Long.MaxValue, NANOSECONDS))
-
-  def runtime[F[_]: Async](
-      retryMaxWait: FiniteDuration
-  ): F[STM[F]] =
     for {
-      idGenVar            <- Ref.of[F, Long](0)
-      idGenTxn            <- Ref.of[F, Long](0)
-      graphBuilderSemaphore    <- Semaphore[F](1)
+      idGenVar              <- Ref.of[F, Long](0)
+      idGenTxn              <- Ref.of[F, Long](0)
+      graphBuilderSemaphore <- Semaphore[F](1)
       stm <- Async[F].delay {
                new STM[F] {
                  override val txnVarIdGen: Ref[F, TxnVarId] = idGenVar
@@ -109,10 +102,7 @@ object STM {
 
                  val txnRuntime: TxnRuntime = new TxnRuntime {
                    override val scheduler: TxnScheduler =
-                     TxnScheduler(
-                       graphBuilderSemaphore = graphBuilderSemaphore,
-                       retryWaitMaxDuration = retryMaxWait
-                     )
+                     TxnScheduler(graphBuilderSemaphore)
                  }
 
                  override def allocateTxnVar[V](value: V): F[TxnVar[F, V]] =
