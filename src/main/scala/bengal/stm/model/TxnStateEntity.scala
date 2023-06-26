@@ -19,8 +19,8 @@ package bengal.stm.model
 
 import bengal.stm.model.runtime._
 
+import cats.effect.Ref
 import cats.effect.std.Semaphore
-import cats.effect.{Deferred, Ref}
 
 import java.util.UUID
 
