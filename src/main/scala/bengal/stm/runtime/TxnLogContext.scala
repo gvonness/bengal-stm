@@ -370,6 +370,7 @@ private[stm] trait TxnLogContext[F[_]] {
 
     import TxnLogValid._
 
+    @nowarn
     override private[stm] def delay[V](
         value: F[V]
     ): F[(TxnLog, V)] =
