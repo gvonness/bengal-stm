@@ -20,23 +20,16 @@ package bengal.stm.model
 import bengal.stm.STM
 import bengal.stm.model.runtime._
 
+import cats.effect.Ref
 import cats.effect.kernel.Async
 import cats.effect.std.Semaphore
-import cats.effect.{Deferred, Ref}
 import cats.syntax.all._
 
-case class TxnVar[F[_]: Async, T](
+case class TxnVar[F[_], T](
     private[stm] val id: TxnVarId,
     protected val value: Ref[F, T],
-    private[stm] val commitLock: Semaphore[F],
-    private[stm] val txnRetrySignals: TxnSignals[F]
+    private[stm] val commitLock: Semaphore[F]
 ) extends TxnStateEntity[F, T] {
-
-  private[stm] def completeRetrySignals: F[Unit] =
-    for {
-      signals <- txnRetrySignals.getAndSet(Set())
-      _       <- signals.toList.traverse(_.complete(()))
-    } yield ()
 
   private[stm] lazy val get: F[T] =
     value.get
@@ -44,10 +37,7 @@ case class TxnVar[F[_]: Async, T](
   private[stm] def set(
       newValue: T
   ): F[Unit] =
-    for {
-      _ <- value.set(newValue)
-      _ <- completeRetrySignals
-    } yield ()
+    value.set(newValue)
 }
 
 object TxnVar {
@@ -57,6 +47,5 @@ object TxnVar {
       id       <- STM[F].txnVarIdGen.updateAndGet(_ + 1)
       valueRef <- Async[F].ref(value)
       lock     <- Semaphore[F](1)
-      signals  <- Async[F].ref(Set[Deferred[F, Unit]]())
-    } yield TxnVar(id, valueRef, lock, signals)
+    } yield TxnVar(id, valueRef, lock)
 }

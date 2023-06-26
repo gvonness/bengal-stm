@@ -38,10 +38,4 @@ private[stm] trait TxnStateEntity[F[_], V] {
 
   protected def value: Ref[F, V]
   private[stm] def commitLock: Semaphore[F]
-  private[stm] def txnRetrySignals: TxnSignals[F]
-
-  private[stm] def registerRetry(
-      signal: Deferred[F, Unit]
-  ): F[Unit] =
-    txnRetrySignals.update(signals => signals ++ Set(signal))
 }

@@ -39,7 +39,6 @@ private[stm] trait TxnLogContext[F[_]] {
     private[stm] def lock: F[Option[Semaphore[F]]]
     private[stm] def idClosure: F[IdClosure]
 
-    private[stm] def getRegisterRetry: F[Deferred[F, Unit] => F[Unit]]
   }
 
   // RO entry is not necessary for pure transactions.
@@ -73,10 +72,6 @@ private[stm] trait TxnLogContext[F[_]] {
 
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].pure(None)
-
-    override private[stm] lazy val getRegisterRetry
-        : F[Deferred[F, Unit] => F[Unit]] =
-      Async[F].delay(txnVar.registerRetry)
 
     override private[stm] lazy val idClosure: F[IdClosure] =
       Async[F].delay(txnVar.runtimeId).map { rid =>
@@ -116,10 +111,6 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].delay(Some(txnVar.commitLock))
 
-    override private[stm] lazy val getRegisterRetry
-        : F[Deferred[F, Unit] => F[Unit]] =
-      Async[F].delay(txnVar.registerRetry)
-
     override private[stm] lazy val idClosure: F[IdClosure] =
       Async[F].delay(txnVar.runtimeId).map { rid =>
         IdClosure(readIds = Set(), updatedIds = Set(rid))
@@ -154,10 +145,6 @@ private[stm] trait TxnLogContext[F[_]] {
 
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].pure(None)
-
-    override private[stm] lazy val getRegisterRetry
-        : F[Deferred[F, Unit] => F[Unit]] =
-      Async[F].delay(txnVarMap.registerRetry)
 
     override private[stm] lazy val idClosure: F[IdClosure] =
       Async[F].delay(txnVarMap.runtimeId).map { rid =>
@@ -197,10 +184,6 @@ private[stm] trait TxnLogContext[F[_]] {
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].delay(Some(txnVarMap.commitLock))
 
-    override private[stm] lazy val getRegisterRetry
-        : F[Deferred[F, Unit] => F[Unit]] =
-      Async[F].delay(txnVarMap.registerRetry)
-
     override private[stm] lazy val idClosure: F[IdClosure] =
       Async[F].delay(txnVarMap.runtimeId).map { rid =>
         IdClosure(readIds = Set(), updatedIds = Set(rid))
@@ -237,18 +220,6 @@ private[stm] trait TxnLogContext[F[_]] {
 
     override private[stm] lazy val lock: F[Option[Semaphore[F]]] =
       Async[F].pure(None)
-
-    override private[stm] lazy val getRegisterRetry
-        : F[Deferred[F, Unit] => F[Unit]] =
-      for {
-        oTxnVar <- txnVarMap.getTxnVar(key)
-        result <- oTxnVar match {
-                    case Some(txnVar) =>
-                      Async[F].pure(i => txnVar.registerRetry(i))
-                    case None =>
-                      Async[F].pure(i => txnVarMap.registerRetry(i))
-                  }
-      } yield result
 
     override private[stm] lazy val idClosure: F[IdClosure] =
       txnVarMap.getRuntimeId(key).map { rid =>
@@ -306,23 +277,6 @@ private[stm] trait TxnLogContext[F[_]] {
       for {
         oTxnVar <- txnVarMap.getTxnVar(key)
       } yield oTxnVar.map(_.commitLock)
-
-    override private[stm] lazy val getRegisterRetry
-        : F[Deferred[F, Unit] => F[Unit]] =
-      for {
-        oTxnVar <- txnVarMap.getTxnVar(key)
-        result <- oTxnVar match {
-                    case Some(txnVar) =>
-                      Async[F].delay { i: Deferred[F, Unit] =>
-                        for {
-                          _ <- txnVar.registerRetry(i)
-                          _ <- txnVarMap.registerRetry(i)
-                        } yield ()
-                      }
-                    case None =>
-                      Async[F].delay(i => txnVarMap.registerRetry(i))
-                  }
-      } yield result
 
     override private[stm] lazy val idClosure: F[IdClosure] =
       txnVarMap.getRuntimeId(key).map { rid =>
