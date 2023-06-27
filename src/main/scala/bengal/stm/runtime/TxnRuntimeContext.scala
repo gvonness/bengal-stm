@@ -57,6 +57,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       graphBuilderSemaphore: Semaphore[F],
       activeTransactions: MutableMap[TxnId, AnalysedTxn[_]]
   ) {
+    override val toString: String = "TxnScheduler"
 
     def submitTxnForImmediateRetry(analysedTxn: AnalysedTxn[_]): F[Unit] =
       for {
