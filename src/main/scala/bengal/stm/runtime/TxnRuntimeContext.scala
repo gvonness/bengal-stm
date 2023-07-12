@@ -223,7 +223,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
   ) {
 
     private[stm] val resetDependencyTally: F[Unit] =
-      dependencyTally.set(0)
+      dependencyTally.set(0) >> hasDownstream.set(false)
 
     private[stm] val checkExecutionReadiness: F[Unit] =
       Async[F].ifM(dependencyTally.get.map(_ == 0))(
@@ -238,7 +238,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       )
 
     private val subscribeUpstreamDependency: F[Unit] =
-      dependencyTally.update(_ + 1) >> hasDownstream.set(false)
+      dependencyTally.update(_ + 1)
 
     private[stm] def subscribeDownstreamDependency(
         txn: AnalysedTxn[_]
