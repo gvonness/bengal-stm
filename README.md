@@ -22,7 +22,7 @@ As there are already many solid references on STM, I will not dive into STM theo
 
 ## Quick Start
 
-To use PureConfig in an existing SBT project with Scala 2.12 or a later version, add the following dependency to your
+To use Bengal-STM in an existing SBT project with Scala 2.12 or a later version, add the following dependency to your
 `build.sbt`:
 
 ```scala
