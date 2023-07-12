@@ -2,6 +2,9 @@
 
 # Bengal STM
 ![Build Status](https://github.com/gvonness/bengal-stm/actions/workflows/build.yml/badge.svg)
+[![Maven Central](https://img.shields.io/maven-central/v/ai.entrolution/bengal-stm_2.13)](https://maven-badges.herokuapp.com/maven-central/ai.entrolution/bengal-stm_2.13)
+
+
 
 Bengal STM is a library for writing composable concurrency operations based on in-memory transactions. The library itself handles all aspects of concurrency management including locking, retries, semantic blocking and optimised transaction scheduling. Generally, STM is a higher-level concurrency abstraction that provides a safe, efficient and composable alternate to locks, mutexes, etc. 
 
@@ -14,6 +17,19 @@ There are two aspects that differentiate Bengal from other STM implementations:
 ## Theory
 
 As there are already many solid references on STM, I will not dive into STM theory here. However, I do highly recommend the writeup in [Beautiful Concurrency](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/beautiful.pdf) for those interested in learning about this concurrency pattern.
+
+---
+
+## Quick Start
+
+To use PureConfig in an existing SBT project with Scala 2.12 or a later version, add the following dependency to your
+`build.sbt`:
+
+```scala
+libraryDependencies += "ai.entrolution" %% "bengal-stm" % VERSION
+```
+
+See the Maven badge above for the latest version.
 
 ---
 
