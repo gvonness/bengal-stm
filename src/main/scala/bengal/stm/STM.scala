@@ -95,6 +95,7 @@ object STM {
       idGenVar              <- Ref.of[F, Long](0)
       idGenTxn              <- Ref.of[F, Long](0)
       graphBuilderSemaphore <- Semaphore[F](1)
+      retrySemaphore        <- Semaphore[F](1)
       stm <- Async[F].delay {
                new STM[F] {
                  override val txnVarIdGen: Ref[F, TxnVarId] = idGenVar
@@ -102,7 +103,9 @@ object STM {
 
                  val txnRuntime: TxnRuntime = new TxnRuntime {
                    override val scheduler: TxnScheduler =
-                     TxnScheduler(graphBuilderSemaphore)
+                     TxnScheduler(graphBuilderSemaphore = graphBuilderSemaphore,
+                                  retrySemaphore = retrySemaphore
+                     )
                  }
 
                  override def allocateTxnVar[V](value: V): F[TxnVar[F, V]] =

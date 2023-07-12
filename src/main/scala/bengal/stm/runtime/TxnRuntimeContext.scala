@@ -55,9 +55,49 @@ private[stm] trait TxnRuntimeContext[F[_]] {
 
   private[stm] case class TxnScheduler(
       graphBuilderSemaphore: Semaphore[F],
-      activeTransactions: MutableMap[TxnId, AnalysedTxn[_]]
+      activeTransactions: MutableMap[TxnId, AnalysedTxn[_]],
+      retrySemaphore: Semaphore[F],
+      retryMap: MutableMap[IdFootprint, F[Unit]]
   ) {
     override val toString: String = "TxnScheduler"
+
+    def checkRetryQueue(idFootprint: IdFootprint): F[Unit] =
+      for {
+        _ <- retrySemaphore.acquire
+        triggeredFootprints <-
+          retryMap.keys.toList.parTraverse { waitingFootprint =>
+            Async[F].ifM(
+              Async[F].delay(
+                !idFootprint.isCompatibleWith(waitingFootprint)
+              )
+            )(
+              retryMap(waitingFootprint) >> Async[F].pure(
+                Option(waitingFootprint)
+              ),
+              Async[F].pure(None.asInstanceOf[Option[IdFootprint]])
+            )
+          }.map(_.flatten)
+        _ <- triggeredFootprints.traverse(footprint =>
+               Async[F].delay(retryMap.remove(footprint))
+             )
+        _ <- retrySemaphore.release
+      } yield ()
+
+    def submitTxnForRetry(analysedTxn: AnalysedTxn[_]): F[Unit] =
+      for {
+        _         <- retrySemaphore.acquire
+        footprint <- Async[F].delay(analysedTxn.idFootprint)
+        execSpec  <- Async[F].delay(retryMap.get(footprint))
+        _ <- Async[F].delay(execSpec match {
+               case Some(spec) =>
+                 retryMap.update(footprint,
+                                 spec >> submitTxn(analysedTxn).start.void
+                 )
+               case None =>
+                 retryMap.addOne(footprint -> submitTxn(analysedTxn).start.void)
+             })
+        _ <- retrySemaphore.release
+      } yield ()
 
     def submitTxnForImmediateRetry(analysedTxn: AnalysedTxn[_]): F[Unit] =
       for {
@@ -108,6 +148,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- testAndLink.parTraverse(_.joinWithNever)
         _ <- analysedTxn.checkExecutionReadiness
         _ <- graphBuilderSemaphore.release
+        _ <- checkRetryQueue(analysedTxn.idFootprint).start
       } yield ()
 
     def submitTxn(analysedTxn: AnalysedTxn[_]): F[Unit] =
@@ -135,6 +176,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
         _ <- testAndLink.parTraverse(_.joinWithNever)
         _ <- analysedTxn.checkExecutionReadiness
         _ <- graphBuilderSemaphore.release
+        _ <- checkRetryQueue(analysedTxn.idFootprint).start
       } yield ()
 
     def registerCompletion(analysedTxn: AnalysedTxn[_]): F[Unit] =
@@ -156,11 +198,14 @@ private[stm] trait TxnRuntimeContext[F[_]] {
   private[stm] object TxnScheduler {
 
     private[stm] def apply(
-        graphBuilderSemaphore: Semaphore[F]
+        graphBuilderSemaphore: Semaphore[F],
+        retrySemaphore: Semaphore[F]
     ): TxnScheduler =
       TxnScheduler(
         activeTransactions = MutableMap(),
-        graphBuilderSemaphore = graphBuilderSemaphore
+        graphBuilderSemaphore = graphBuilderSemaphore,
+        retrySemaphore = retrySemaphore,
+        retryMap = MutableMap()
       )
 
   }
@@ -173,11 +218,12 @@ private[stm] trait TxnRuntimeContext[F[_]] {
       dependencyTally: Ref[F, Int],
       unsubSpecs: MutableMap[TxnId, F[Unit]],
       executionStatus: Ref[F, ExecutionStatus],
+      hasDownstream: Ref[F, Boolean],
       scheduler: TxnScheduler
   ) {
 
     private[stm] val resetDependencyTally: F[Unit] =
-      dependencyTally.set(0)
+      dependencyTally.set(0) >> hasDownstream.set(false)
 
     private[stm] val checkExecutionReadiness: F[Unit] =
       Async[F].ifM(dependencyTally.get.map(_ == 0))(
@@ -208,6 +254,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                   txn.id -> txn.unsubscribeUpstreamDependency
                 )
               )
+          _ <- hasDownstream.set(true)
         } yield ()
       )
 
@@ -293,7 +340,10 @@ private[stm] trait TxnRuntimeContext[F[_]] {
                             Right[Throwable, V](result.asInstanceOf[V])
                           )
                         case TxnResultRetry =>
-                          ex.submitTxn(this)
+                          Async[F].ifM(hasDownstream.get)(
+                            ex.submitTxn(this),
+                            ex.submitTxnForRetry(this)
+                          )
                         case TxnResultLogDirty(idFootprintRefinement) =>
                           ex.submitTxnForImmediateRetry(
                             this.copy(idFootprint =
@@ -335,6 +385,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
             }
         completionSignal <- Deferred[F, Either[Throwable, V]]
         dependencyTally  <- Ref[F].of(0)
+        hasDownstream    <- Ref[F].of(false)
         executionStatus  <- Ref[F].of(NotScheduled.asInstanceOf[ExecutionStatus])
         id               <- txnIdGen.getAndUpdate(_ + 1)
         analysedTxn <-
@@ -347,6 +398,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
               dependencyTally = dependencyTally,
               unsubSpecs = MutableMap(),
               executionStatus = executionStatus,
+              hasDownstream = hasDownstream,
               scheduler = scheduler
             )
           )
