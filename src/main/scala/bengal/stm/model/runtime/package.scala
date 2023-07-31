@@ -17,11 +17,10 @@
 package ai.entrolution
 package bengal.stm.model
 
-import scala.collection.mutable.{Map => MutableMap}
+import scala.collection.mutable.{ Map => MutableMap }
 
 package object runtime {
-  private[stm] type TxnVarId        = Long
-  private[stm] type TxnId           = Long
-
+  private[stm] type TxnVarId             = Long
+  private[stm] type TxnId                = Long
   private[stm] type VarIndex[F[_], K, V] = MutableMap[K, TxnVar[F, V]]
 }

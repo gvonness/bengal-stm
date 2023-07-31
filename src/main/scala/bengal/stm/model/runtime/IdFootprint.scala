@@ -18,19 +18,18 @@ package ai.entrolution
 package bengal.stm.model.runtime
 
 private[stm] case class IdFootprint(
-    readIds: Set[TxnVarRuntimeId],
-    updatedIds: Set[TxnVarRuntimeId],
-    isValidated: Boolean = false
+  readIds: Set[TxnVarRuntimeId],
+  updatedIds: Set[TxnVarRuntimeId],
+  isValidated: Boolean = false
 ) {
 
   private[stm] lazy val getValidated =
     if (isValidated) {
       this
     } else {
-      this.copy(readIds = (readIds -- updatedIds).filter(id =>
-                  id.parent.forall(pid => !updateRawIds.contains(pid.value))
-                ),
-                isValidated = true
+      this.copy(
+        readIds     = (readIds -- updatedIds).filter(id => id.parent.forall(pid => !updateRawIds.contains(pid.value))),
+        isValidated = true
       )
     }
 
@@ -48,9 +47,7 @@ private[stm] case class IdFootprint(
     this.copy(updatedIds = updatedIds + id)
 
   private[stm] def mergeWith(idScope: IdFootprint): IdFootprint =
-    this.copy(readIds = readIds ++ idScope.readIds,
-              updatedIds = updatedIds ++ idScope.updatedIds
-    )
+    this.copy(readIds = readIds ++ idScope.readIds, updatedIds = updatedIds ++ idScope.updatedIds)
 
   private def asymmetricCompatibleWith(input: IdFootprint): Boolean =
     combinedRawIds.intersect(input.updateRawIds).isEmpty && !combinedIds.exists(

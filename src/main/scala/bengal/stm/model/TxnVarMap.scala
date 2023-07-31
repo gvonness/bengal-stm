@@ -26,20 +26,17 @@ import cats.effect.std.Semaphore
 import cats.syntax.all._
 
 import java.util.UUID
-import scala.collection.mutable.{Map => MutableMap}
+import scala.collection.mutable.{ Map => MutableMap }
 
 case class TxnVarMap[F[_]: STM: Async, K, V](
-    private[stm] val id: TxnVarId,
-    protected val value: Ref[F, VarIndex[F, K, V]],
-    private[stm] val commitLock: Semaphore[F],
-    private val internalStructureLock: Semaphore[F],
-    private val internalSignalLock: Semaphore[F],
+  private[stm] val id: TxnVarId,
+  protected val value: Ref[F, VarIndex[F, K, V]],
+  private[stm] val commitLock: Semaphore[F],
+  private val internalStructureLock: Semaphore[F],
+  private val internalSignalLock: Semaphore[F]
 ) extends TxnStateEntity[F, VarIndex[F, K, V]] {
 
-  private def withLock[A](semaphore: Semaphore[F])(
-      fa: F[A]
-  ): F[A] =
-    semaphore.permit.use(_ => fa)
+  private def withLock[A](semaphore: Semaphore[F])(fa: F[A]): F[A] = semaphore.permit.use(_ => fa)
 
   private[stm] lazy val get: F[Map[K, V]] =
     for {
@@ -69,7 +66,7 @@ case class TxnVarMap[F[_]: STM: Async, K, V](
     TxnVarRuntimeId(UUID.nameUUIDFromBytes((id, key).toString.getBytes).hashCode())
 
   private[stm] def getRuntimeId(
-      key: K
+    key: K
   ): F[TxnVarRuntimeId] =
     Async[F].delay(getRuntimeExistentialId(key).addParent(runtimeId))
 
@@ -119,10 +116,5 @@ object TxnVarMap {
       lock                  <- Semaphore[F](1)
       internalStructureLock <- Semaphore[F](1)
       internalSignalLock    <- Semaphore[F](1)
-    } yield TxnVarMap(id,
-                      valuesRef,
-                      lock,
-                      internalStructureLock,
-                      internalSignalLock
-    )
+    } yield TxnVarMap(id, valuesRef, lock, internalStructureLock, internalSignalLock)
 }

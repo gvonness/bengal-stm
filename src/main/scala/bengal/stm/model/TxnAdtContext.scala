@@ -28,42 +28,41 @@ private[stm] trait TxnAdtContext[F[_]] {
   private[stm] case class TxnGetVar[V](txnVar: TxnVar[F, V]) extends TxnAdt[V]
 
   private[stm] case class TxnSetVar[V](
-      newValue: F[V],
-      txnVar: TxnVar[F, V]
+    newValue: F[V],
+    txnVar: TxnVar[F, V]
   ) extends TxnAdt[Unit]
 
-  private[stm] case class TxnGetVarMap[K, V](txnVarMap: TxnVarMap[F, K, V])
-      extends TxnAdt[Map[K, V]]
+  private[stm] case class TxnGetVarMap[K, V](txnVarMap: TxnVarMap[F, K, V]) extends TxnAdt[Map[K, V]]
 
   private[stm] case class TxnGetVarMapValue[K, V](
-      key: F[K],
-      txnVarMap: TxnVarMap[F, K, V]
+    key: F[K],
+    txnVarMap: TxnVarMap[F, K, V]
   ) extends TxnAdt[Option[V]]
 
   private[stm] case class TxnSetVarMap[K, V](
-      newMap: F[Map[K, V]],
-      txnVarMap: TxnVarMap[F, K, V]
+    newMap: F[Map[K, V]],
+    txnVarMap: TxnVarMap[F, K, V]
   ) extends TxnAdt[Unit]
 
   private[stm] case class TxnSetVarMapValue[K, V](
-      key: F[K],
-      newValue: F[V],
-      txnVarMap: TxnVarMap[F, K, V]
+    key: F[K],
+    newValue: F[V],
+    txnVarMap: TxnVarMap[F, K, V]
   ) extends TxnAdt[Unit]
 
   private[stm] case class TxnModifyVarMapValue[K, V](
-      key: F[K],
-      f: V => F[V],
-      txnVarMap: TxnVarMap[F, K, V]
+    key: F[K],
+    f: V => F[V],
+    txnVarMap: TxnVarMap[F, K, V]
   ) extends TxnAdt[Unit]
 
   private[stm] case class TxnDeleteVarMapValue[K, V](
-      key: F[K],
-      txnVarMap: TxnVarMap[F, K, V]
+    key: F[K],
+    txnVarMap: TxnVarMap[F, K, V]
   ) extends TxnAdt[Unit]
 
   private[stm] case class TxnHandleError[V](
-      fa: F[Txn[V]],
-      f: Throwable => F[Txn[V]]
+    fa: F[Txn[V]],
+    f: Throwable => F[Txn[V]]
   ) extends TxnAdt[V]
 }

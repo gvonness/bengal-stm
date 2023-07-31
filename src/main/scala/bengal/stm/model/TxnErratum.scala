@@ -20,8 +20,6 @@ package bengal.stm.model
 private[stm] sealed trait TxnErratum
 
 object TxnErratum {
-
   private[stm] case object TxnRetry extends TxnErratum
-
   private[stm] case class TxnError(ex: Throwable) extends TxnErratum
 }

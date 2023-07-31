@@ -38,11 +38,10 @@ private[stm] trait TxnCompilerContext[F[_]] {
     StateT[F, S, Unit](s => Async[F].delay((s, ())))
 
   private[stm] case class StaticAnalysisShortCircuitException(
-      idFootprint: IdFootprint
+    idFootprint: IdFootprint
   ) extends RuntimeException
 
-  private[stm] def staticAnalysisCompiler
-      : FunctionK[TxnOrErr, IdFootprintStore] =
+  private[stm] def staticAnalysisCompiler: FunctionK[TxnOrErr, IdFootprintStore] =
     new (FunctionK[TxnOrErr, IdFootprintStore]) {
 
       @nowarn
@@ -51,14 +50,16 @@ private[stm] trait TxnCompilerContext[F[_]] {
           case Right(entry) =>
             entry match {
               case TxnUnit =>
-                noOp[IdFootprint].map(_.asInstanceOf[V])
+                noOp[IdFootprint]
               case TxnDelay(thunk) =>
                 StateT[F, IdFootprint, V] { s =>
-                  thunk.map { materializedValue =>
-                    (s, materializedValue)
-                  }.handleErrorWith { _ =>
-                    Async[F].raiseError(StaticAnalysisShortCircuitException(s))
-                  }
+                  thunk
+                    .map { materializedValue =>
+                      (s, materializedValue)
+                    }
+                    .handleErrorWith { _ =>
+                      Async[F].raiseError(StaticAnalysisShortCircuitException(s))
+                    }
                 }
               case TxnPure(value) =>
                 StateT[F, IdFootprint, V](s => Async[F].pure((s, value)))
@@ -74,80 +75,87 @@ private[stm] trait TxnCompilerContext[F[_]] {
                 StateT[F, IdFootprint, V] { s =>
                   for {
                     rId    <- Async[F].delay(adt.txnVarMap.runtimeId)
-                    v      <- adt.txnVarMap.get.map(_.asInstanceOf[V])
+                    v      <- adt.txnVarMap.get
                     result <- Async[F].delay(s.addReadId(rId))
                   } yield (result, v)
                 }
               case adt: TxnGetVarMapValue[_, _] =>
                 StateT[F, IdFootprint, V] { s =>
-                  adt.key.flatMap { materializedKey =>
-                    for {
-                      oTxnVar <-
-                        adt.txnVarMap.getTxnVar(materializedKey)
-                      value <-
-                        oTxnVar
-                          .map(_.get.map(Some(_)))
-                          .getOrElse(Async[F].pure(None))
-                      eRId     <- adt.txnVarMap.getRuntimeId(materializedKey)
-                      valueAsV <- Async[F].delay(value.asInstanceOf[V])
-                      result <-
-                        Async[F].delay(s.addReadId(eRId)).map((_, valueAsV))
-                    } yield result
-                  }.handleErrorWith { _ =>
-                    Async[F].raiseError(StaticAnalysisShortCircuitException(s))
-                  }
+                  adt.key
+                    .flatMap { materializedKey =>
+                      for {
+                        oTxnVar <-
+                          adt.txnVarMap.getTxnVar(materializedKey)
+                        value <-
+                          oTxnVar
+                            .map(_.get.map(Some(_)))
+                            .getOrElse(Async[F].pure(None))
+                        eRId     <- adt.txnVarMap.getRuntimeId(materializedKey)
+                        valueAsV <- Async[F].delay(value.asInstanceOf[V])
+                        result <-
+                          Async[F].delay(s.addReadId(eRId)).map((_, valueAsV))
+                      } yield result
+                    }
+                    .handleErrorWith { _ =>
+                      Async[F].raiseError(StaticAnalysisShortCircuitException(s))
+                    }
                 }
               case adt: TxnSetVar[_] =>
                 StateT[F, IdFootprint, V] { s =>
                   Async[F].delay(
-                    (s.addWriteId(adt.txnVar.runtimeId), ().asInstanceOf[V])
+                    (s.addWriteId(adt.txnVar.runtimeId), ())
                   )
                 }
               case adt: TxnSetVarMap[_, _] =>
                 StateT[F, IdFootprint, V] { s =>
                   Async[F].delay(
-                    (s.addWriteId(adt.txnVarMap.runtimeId), ().asInstanceOf[V])
+                    (s.addWriteId(adt.txnVarMap.runtimeId), ())
                   )
                 }
               case adt: TxnSetVarMapValue[_, _] =>
                 StateT[F, IdFootprint, Unit] { s =>
-                  adt.key.flatMap { materializedKey =>
-                    for {
-                      eRId   <- adt.txnVarMap.getRuntimeId(materializedKey)
-                      result <- Async[F].delay(s.addWriteId(eRId)).map((_, ()))
-                    } yield result
-                  }.handleErrorWith { _ =>
-                    Async[F].delay((s, ()))
-                  }
-                }.map(_.asInstanceOf[V])
+                  adt.key
+                    .flatMap { materializedKey =>
+                      for {
+                        eRId   <- adt.txnVarMap.getRuntimeId(materializedKey)
+                        result <- Async[F].delay(s.addWriteId(eRId)).map((_, ()))
+                      } yield result
+                    }
+                    .handleErrorWith { _ =>
+                      Async[F].delay((s, ()))
+                    }
+                }
               case adt: TxnModifyVarMapValue[_, _] =>
                 StateT[F, IdFootprint, Unit] { s =>
-                  adt.key.flatMap { materializedKey =>
-                    for {
-                      eRId <- adt.txnVarMap.getRuntimeId(materializedKey)
-                      result <- Async[F]
-                                  .delay(s.addWriteId(eRId))
-                                  .map((_, ()))
-                    } yield result
-                  }.handleErrorWith { _ =>
-                    Async[F].delay((s, ()))
-                  }
-                }.map(_.asInstanceOf[V])
+                  adt.key
+                    .flatMap { materializedKey =>
+                      for {
+                        eRId <- adt.txnVarMap.getRuntimeId(materializedKey)
+                        result <- Async[F]
+                                    .delay(s.addWriteId(eRId))
+                                    .map((_, ()))
+                      } yield result
+                    }
+                    .handleErrorWith { _ =>
+                      Async[F].delay((s, ()))
+                    }
+                }
               case adt: TxnDeleteVarMapValue[_, _] =>
                 StateT[F, IdFootprint, Unit] { s =>
-                  adt.key.flatMap { materializedKey =>
-                    for {
-                      eRId   <- adt.txnVarMap.getRuntimeId(materializedKey)
-                      result <- Async[F].delay(s.addWriteId(eRId)).map((_, ()))
-                    } yield result
-                  }.handleErrorWith { _ =>
-                    Async[F].delay((s, ()))
-                  }
-                }.map(_.asInstanceOf[V])
+                  adt.key
+                    .flatMap { materializedKey =>
+                      for {
+                        eRId   <- adt.txnVarMap.getRuntimeId(materializedKey)
+                        result <- Async[F].delay(s.addWriteId(eRId)).map((_, ()))
+                      } yield result
+                    }
+                    .handleErrorWith { _ =>
+                      Async[F].delay((s, ()))
+                    }
+                }
               case adt: TxnHandleError[_] =>
                 StateT[F, IdFootprint, V] { s =>
                   adt.fa
-                    .map(_.map(_.asInstanceOf[V]))
                     .flatMap { materializedF =>
                       materializedF
                         .foldMap(staticAnalysisCompiler)
@@ -174,7 +182,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
           case Right(entry) =>
             entry match {
               case TxnUnit =>
-                noOp[TxnLog].map(_.asInstanceOf[V])
+                noOp[TxnLog]
               case TxnDelay(thunk) =>
                 StateT[F, TxnLog, V] { s =>
                   s.delay(thunk)
@@ -190,19 +198,18 @@ private[stm] trait TxnCompilerContext[F[_]] {
               case adt: TxnSetVar[_] =>
                 StateT[F, TxnLog, V] { s =>
                   s.setVar(adt.newValue, adt.txnVar)
-                    .map((_, ().asInstanceOf[V]))
+                    .map((_, ()))
                 }
               case adt: TxnGetVarMap[_, _] =>
                 StateT[F, TxnLog, V] { s =>
                   s.getVarMap(adt.txnVarMap).map { stateAndValue =>
-                    (stateAndValue._1, stateAndValue._2.asInstanceOf[V])
+                    (stateAndValue._1, stateAndValue._2)
                   }
                 }
               case adt: TxnGetVarMapValue[_, _] =>
                 StateT[F, TxnLog, V] { s =>
-                  s.getVarMapValue(adt.key, adt.txnVarMap).map {
-                    stateAndValue =>
-                      (stateAndValue._1, stateAndValue._2.asInstanceOf[V])
+                  s.getVarMapValue(adt.key, adt.txnVarMap).map { stateAndValue =>
+                    (stateAndValue._1, stateAndValue._2)
                   }
                 }
               case adt: TxnSetVarMap[_, _] =>
@@ -210,22 +217,22 @@ private[stm] trait TxnCompilerContext[F[_]] {
                   for {
                     newState <-
                       s.setVarMap(adt.newMap, adt.txnVarMap)
-                  } yield (newState, ().asInstanceOf[V])
+                  } yield (newState, ())
                 }
               case adt: TxnSetVarMapValue[_, _] =>
                 StateT[F, TxnLog, V] { s =>
                   s.setVarMapValue(adt.key, adt.newValue, adt.txnVarMap)
-                    .map((_, ().asInstanceOf[V]))
+                    .map((_, ()))
                 }
               case adt: TxnModifyVarMapValue[_, _] =>
                 StateT[F, TxnLog, V] { s =>
                   s.modifyVarMapValue(adt.key, adt.f, adt.txnVarMap)
-                    .map((_, ().asInstanceOf[V]))
+                    .map((_, ()))
                 }
               case adt: TxnDeleteVarMapValue[_, _] =>
                 StateT[F, TxnLog, V] { s =>
                   s.deleteVarMapValue(adt.key, adt.txnVarMap)
-                    .map((_, ().asInstanceOf[V]))
+                    .map((_, ()))
                 }
               case adt: TxnHandleError[_] =>
                 StateT[F, TxnLog, V] { s =>
@@ -244,9 +251,7 @@ private[stm] trait TxnCompilerContext[F[_]] {
                                      case _ =>
                                        Async[F].pure(originalResult)
                                    }
-                  } yield (finalResult._1,
-                           finalResult._2.asInstanceOf[V]
-                  )).handleErrorWith { ex =>
+                  } yield (finalResult._1, finalResult._2)).handleErrorWith { ex =>
                     s.raiseError(ex).map((_, ().asInstanceOf[V]))
                   }
                 }
