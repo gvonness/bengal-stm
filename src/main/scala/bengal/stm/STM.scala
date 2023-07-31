@@ -29,11 +29,11 @@ import cats.implicits._
 
 abstract class STM[F[_]: Async]
     extends AsyncImplicits[F]
-    with TxnRuntimeContext[F]
-    with TxnCompilerContext[F]
+    with TxnAdtContext[F]
     with TxnLogContext[F]
-    with TxnApiContext[F]
-    with TxnAdtContext[F] {
+    with TxnCompilerContext[F]
+    with TxnRuntimeContext[F]
+    with TxnApiContext[F] {
 
   def allocateTxnVar[V](value: V): F[TxnVar[F, V]]
   def allocateTxnVarMap[K, V](valueMap: Map[K, V]): F[TxnVarMap[F, K, V]]

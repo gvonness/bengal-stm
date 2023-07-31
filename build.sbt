@@ -1,25 +1,23 @@
-ThisBuild / baseVersion := "0.9.2"
+ThisBuild / baseVersion := "0.9.3"
 
-ThisBuild / organization := "ai.entrolution"
-ThisBuild / organizationName := "Greg von Nessi"
+ThisBuild / organization      := "ai.entrolution"
+ThisBuild / organizationName  := "Greg von Nessi"
 ThisBuild / publishGithubUser := "gvonness"
-ThisBuild / publishFullName := "Greg von Nessi"
+ThisBuild / publishFullName   := "Greg von Nessi"
 
 ThisBuild / homepage := Some(url("https://github.com/gvonness/bengal-stm"))
 ThisBuild / scmInfo := Some(
-  ScmInfo(url("https://github.com/gvonness/bengal-stm"),
-          "git@github.com:gvonness/bengal-stm.git"
-  )
+  ScmInfo(url("https://github.com/gvonness/bengal-stm"), "git@github.com:gvonness/bengal-stm.git")
 )
 
 ThisBuild / startYear := Some(2020)
-ThisBuild / endYear := Some(2023)
+ThisBuild / endYear   := Some(2023)
 
 ThisBuild / spiewakCiReleaseSnapshots := false
-ThisBuild / spiewakMainBranches := Seq("main")
+ThisBuild / spiewakMainBranches       := Seq("main")
 
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
+ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
 
 ThisBuild / scalaVersion := DependencyVersions.scala2p13Version
 ThisBuild / crossScalaVersions := Seq(

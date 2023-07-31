@@ -26,18 +26,14 @@ import cats.effect.std.Semaphore
 import cats.syntax.all._
 
 case class TxnVar[F[_], T](
-    private[stm] val id: TxnVarId,
-    protected val value: Ref[F, T],
-    private[stm] val commitLock: Semaphore[F]
+  private[stm] val id: TxnVarId,
+  protected val value: Ref[F, T],
+  private[stm] val commitLock: Semaphore[F]
 ) extends TxnStateEntity[F, T] {
 
-  private[stm] lazy val get: F[T] =
-    value.get
+  private[stm] lazy val get: F[T] = value.get
 
-  private[stm] def set(
-      newValue: T
-  ): F[Unit] =
-    value.set(newValue)
+  private[stm] def set(newValue: T): F[Unit] = value.set(newValue)
 }
 
 object TxnVar {

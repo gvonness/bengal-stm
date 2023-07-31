@@ -32,8 +32,8 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
   "commit" - {
     "correctly execute multiple programs" in {
       def program1(
-          txnVarTest: TxnVar[IO, Int],
-          txnVarMapTest: TxnVarMap[IO, String, Int]
+        txnVarTest: TxnVar[IO, Int],
+        txnVarMapTest: TxnVarMap[IO, String, Int]
       )(implicit stm: STM[IO]): Txn[Int] = for {
         v0 <- txnVarTest.get // 11
         v1 <- txnVarMapTest.get("foo") // 5
@@ -50,20 +50,20 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
         v7 <- txnVarMapTest.get("foo") // None
         v8 <- STM[IO].delay(12)
       } yield List[Option[Int]](
-        Some(v0),            // 11
-        v1,                  // Some(5)
-        Some(v2),            // Some(16)
-        Some(v3),            // Some(16)
-        v4,                  // Some(4)
-        v5,                  // Some(77)
+        Some(v0), // 11
+        v1, // Some(5)
+        Some(v2), // Some(16)
+        Some(v3), // Some(16)
+        v4, // Some(4)
+        v5, // Some(77)
         Some(v6.values.sum), // Some(-10)
-        v7,                  // None
-        Some(v8)             // Some(12)
-      ).flatten.sum          // 131
+        v7, // None
+        Some(v8) // Some(12)
+      ).flatten.sum // 131
 
       def program2(
-          txnVarTest: TxnVar[IO, Int],
-          txnVarMapTest: TxnVarMap[IO, String, Int]
+        txnVarTest: TxnVar[IO, Int],
+        txnVarMapTest: TxnVarMap[IO, String, Int]
       )(implicit stm: STM[IO]): Txn[Int] = for {
         v0 <- txnVarTest.get // 16
         _  <- STM[IO].waitFor(v0 > 12)
@@ -89,8 +89,8 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
 
     "correctly execute with transient evaluation errors in the static analysis" in {
       def program1(
-          txnVarQueue: TxnVar[IO, Queue[Int]],
-          txnVar: TxnVar[IO, Int]
+        txnVarQueue: TxnVar[IO, Queue[Int]],
+        txnVar: TxnVar[IO, Int]
       )(implicit stm: STM[IO]): Txn[Unit] = for {
         queueResult <- txnVarQueue.get
         _           <- STM[IO].waitFor(queueResult.nonEmpty)
@@ -100,7 +100,7 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
       } yield ()
 
       def program2(txnVarQueue: TxnVar[IO, Queue[Int]])(implicit
-          stm: STM[IO]
+        stm: STM[IO]
       ): Txn[Unit] = for {
         _ <- txnVarQueue.modify(_.enqueue(27))
         _ <- txnVarQueue.modify(_.enqueue(18))

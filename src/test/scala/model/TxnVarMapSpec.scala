@@ -27,11 +27,7 @@ import org.scalatest.EitherValues
 import org.scalatest.freespec.AsyncFreeSpec
 import org.scalatest.matchers.should.Matchers
 
-class TxnVarMapSpec
-    extends AsyncFreeSpec
-    with AsyncIOSpec
-    with Matchers
-    with EitherValues {
+class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with EitherValues {
   val baseMap: Map[String, Int] = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
   "TxnVarMap.get" - {
