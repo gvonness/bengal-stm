@@ -34,7 +34,7 @@ private[stm] trait TxnRuntimeContext[F[_]] {
   private[stm] val txnIdGen: Ref[F, TxnId]
   private[stm] val txnVarIdGen: Ref[F, TxnVarId]
 
-  private[stm] sealed trait TxnResult
+  sealed private[stm] trait TxnResult
   private[stm] case class TxnResultSuccess[V](result: V) extends TxnResult
 
   private[stm] case object TxnResultRetry extends TxnResult

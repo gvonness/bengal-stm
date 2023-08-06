@@ -20,7 +20,7 @@ package bengal.stm
 import bengal.stm.api.internal.TxnApiContext
 import bengal.stm.model._
 import bengal.stm.model.runtime._
-import bengal.stm.runtime.{TxnCompilerContext, TxnLogContext, TxnRuntimeContext}
+import bengal.stm.runtime.{ TxnCompilerContext, TxnLogContext, TxnRuntimeContext }
 
 import cats.effect.Ref
 import cats.effect.kernel.Async
@@ -103,16 +103,14 @@ object STM {
 
                  val txnRuntime: TxnRuntime = new TxnRuntime {
                    override val scheduler: TxnScheduler =
-                     TxnScheduler(graphBuilderSemaphore = graphBuilderSemaphore,
-                                  retrySemaphore = retrySemaphore
-                     )
+                     TxnScheduler(graphBuilderSemaphore = graphBuilderSemaphore, retrySemaphore = retrySemaphore)
                  }
 
                  override def allocateTxnVar[V](value: V): F[TxnVar[F, V]] =
                    TxnVar.of(value)(this, this.asyncF)
 
                  override def allocateTxnVarMap[K, V](
-                     valueMap: Map[K, V]
+                   valueMap: Map[K, V]
                  ): F[TxnVarMap[F, K, V]] =
                    TxnVarMap.of(valueMap)(this, this.asyncF)
 

@@ -17,7 +17,7 @@
 package ai.entrolution
 package bengal.stm.model
 
-private[stm] sealed trait TxnErratum
+sealed private[stm] trait TxnErratum
 
 object TxnErratum {
   private[stm] case object TxnRetry extends TxnErratum
