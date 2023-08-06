@@ -33,7 +33,7 @@ private[stm] trait TxnStateEntity[F[_], V] {
   // Note: We run this through a deterministic UUID mapping
   // to mitigate the chance of increment-based IDs colliding
   // with bare hash codes
-  private[stm] final lazy val runtimeId: TxnVarRuntimeId =
+  final private[stm] lazy val runtimeId: TxnVarRuntimeId =
     TxnVarRuntimeId(UUID.nameUUIDFromBytes(id.toString.getBytes).hashCode())
   protected def value: Ref[F, V]
   private[stm] def commitLock: Semaphore[F]

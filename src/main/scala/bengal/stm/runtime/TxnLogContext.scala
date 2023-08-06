@@ -31,7 +31,7 @@ import scala.annotation.nowarn
 private[stm] trait TxnLogContext[F[_]] {
   this: AsyncImplicits[F] =>
 
-  private[stm] sealed trait TxnLogEntry[V] {
+  sealed private[stm] trait TxnLogEntry[V] {
     private[stm] def get: V
     private[stm] def set(value: V): TxnLogEntry[V]
     private[stm] def commit: F[Unit]
@@ -287,7 +287,7 @@ private[stm] trait TxnLogContext[F[_]] {
       }
   }
 
-  private[stm] sealed trait TxnLog { self =>
+  sealed private[stm] trait TxnLog { self =>
 
     private[stm] def getVar[V](txnVar: TxnVar[F, V]): F[(TxnLog, V)]
 
