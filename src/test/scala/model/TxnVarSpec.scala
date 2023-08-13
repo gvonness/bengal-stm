@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2023 Greg von Nessi
+ * Copyright 2023 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package ai.entrolution
 package model
 
 import bengal.stm.STM
-import bengal.stm.model._
-import bengal.stm.syntax.all._
+import bengal.stm.model.*
+import bengal.stm.syntax.all.*
 
 import cats.effect.IO
 import cats.effect.testing.scalatest.AsyncIOSpec
@@ -30,7 +30,7 @@ class TxnVarSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
   "TxnVar.get" - {
     "return the value of a transactional variable" in {
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
         tVar                    <- TxnVar.of(123)
         result                  <- tVar.get.commit
       } yield result).asserting(_ shouldBe 123)
@@ -40,7 +40,7 @@ class TxnVarSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
   "TxnVar.set" - {
     "update the value of a transactional variable" in {
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
         tVar                    <- TxnVar.of(123)
         _                       <- tVar.set(2718).commit
         result                  <- tVar.get.commit
@@ -51,7 +51,7 @@ class TxnVarSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
   "TxnVar.modify" - {
     "modify the value of a transactional variable" in {
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
         tVar                    <- TxnVar.of("foo")
         _                       <- tVar.modify(_ + "bar").commit
         result                  <- tVar.get.commit

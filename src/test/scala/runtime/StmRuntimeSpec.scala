@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2023 Greg von Nessi
+ * Copyright 2023 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,7 +75,7 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
       } yield v0 + v1 + v2.values.sum // -6
 
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
         txnVarTest              <- TxnVar.of(11)
         txnVarMapTest           <- TxnVarMap.of(Map("foo" -> 5, "bar" -> 1))
         result <- for {
@@ -108,7 +108,7 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
       } yield () // -6
 
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
         txnVarQueue             <- TxnVar.of(Queue[Int]())
         txnVar                  <- TxnVar.of(0)
         result <- for {

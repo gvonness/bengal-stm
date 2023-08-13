@@ -1,9 +1,9 @@
 ThisBuild / tlBaseVersion := "0.9"
 
-ThisBuild / organization      := "ai.entrolution"
-ThisBuild / organizationName  := "Greg von Nessi"
-ThisBuild / startYear := Some(2023)
-ThisBuild / licenses := Seq(License.Apache2)
+ThisBuild / organization     := "ai.entrolution"
+ThisBuild / organizationName := "Greg von Nessi"
+ThisBuild / startYear        := Some(2023)
+ThisBuild / licenses         := Seq(License.Apache2)
 ThisBuild / developers ++= List(
   tlGitHubDev("gvonness", "Greg von Nessi")
 )
