@@ -34,8 +34,8 @@ class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with Ei
     "return the value of a transactional map" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        result                  <- tVarMap.get.commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        result  <- tVarMap.get.commit
       } yield result).asserting(_ shouldBe baseMap)
     }
   }
@@ -46,9 +46,9 @@ class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with Ei
 
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        _                       <- tVarMap.set(newMap).commit
-        result                  <- tVarMap.get.commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        _       <- tVarMap.set(newMap).commit
+        result  <- tVarMap.get.commit
       } yield result).asserting(_ shouldBe newMap)
     }
   }
@@ -62,9 +62,9 @@ class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with Ei
 
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        _                       <- tVarMap.modify(mapTransform).commit
-        result                  <- tVarMap.get.commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        _       <- tVarMap.modify(mapTransform).commit
+        result  <- tVarMap.get.commit
       } yield result).asserting(_ shouldBe resultMap)
     }
   }
@@ -73,23 +73,23 @@ class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with Ei
     "return the value of transactional variable" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        result                  <- tVarMap.get("foo").commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        result  <- tVarMap.get("foo").commit
       } yield result).asserting(_ shouldBe Some(42))
     }
 
     "return None if key isn't present" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        result                  <- tVarMap.get("foobar").commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        result  <- tVarMap.get("foobar").commit
       } yield result).asserting(_ shouldBe None)
     }
 
     "return None if the key is deleted in the current transaction" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
+        tVarMap <- TxnVarMap.of(baseMap)
         result <- (for {
                     _           <- tVarMap.remove("foo")
                     innerResult <- tVarMap.get("foo")
@@ -102,18 +102,18 @@ class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with Ei
     "update values for existing keys" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        _                       <- tVarMap.set("foo", 2).commit
-        result                  <- tVarMap.get("foo").commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        _       <- tVarMap.set("foo", 2).commit
+        result  <- tVarMap.get("foo").commit
       } yield result).asserting(_ shouldBe Some(2))
     }
 
     "creates new entry for non-existent key" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        _                       <- tVarMap.set("foobaz", 2).commit
-        result                  <- tVarMap.get("foobaz").commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        _       <- tVarMap.set("foobaz", 2).commit
+        result  <- tVarMap.get("foobaz").commit
       } yield result).asserting(_ shouldBe Some(2))
     }
   }
@@ -122,24 +122,24 @@ class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with Ei
     "modify value for pre-existing entry" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        _                       <- tVarMap.modify("baz", _ - 12).commit
-        result                  <- tVarMap.get("baz").commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        _       <- tVarMap.modify("baz", _ - 12).commit
+        result  <- tVarMap.get("baz").commit
       } yield result).asserting(_ shouldBe Some(6))
     }
 
     "throw an error if key isn't present" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        result                  <- tVarMap.modify("foobar", _ + 2).commit.attempt
+        tVarMap <- TxnVarMap.of(baseMap)
+        result  <- tVarMap.modify("foobar", _ + 2).commit.attempt
       } yield result).asserting(_.left.value shouldBe a[RuntimeException])
     }
 
     "modify value for key created in current transaction" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
+        tVarMap <- TxnVarMap.of(baseMap)
         result <- (for {
                     _           <- tVarMap.set("foobaz", 3)
                     _           <- tVarMap.modify("foobaz", _ + 22)
@@ -153,24 +153,24 @@ class TxnVarMapSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers with Ei
     "remove value for pre-existing entry" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        _                       <- tVarMap.remove("baz").commit
-        result                  <- tVarMap.get.commit
+        tVarMap <- TxnVarMap.of(baseMap)
+        _       <- tVarMap.remove("baz").commit
+        result  <- tVarMap.get.commit
       } yield result).asserting(_ shouldBe Map("foo" -> 42, "bar" -> 27))
     }
 
     "throw an error if key doesn't exist" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
-        result                  <- tVarMap.remove("foobar").commit.attempt
+        tVarMap <- TxnVarMap.of(baseMap)
+        result  <- tVarMap.remove("foobar").commit.attempt
       } yield result).asserting(_.left.value shouldBe a[RuntimeException])
     }
 
     "remove value of entry created in current transaction" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
+        tVarMap <- TxnVarMap.of(baseMap)
         result <- (for {
                     _           <- tVarMap.set("foobar", 22)
                     _           <- tVarMap.remove("foobar")

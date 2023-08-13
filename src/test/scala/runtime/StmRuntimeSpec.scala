@@ -18,8 +18,8 @@ package ai.entrolution
 package runtime
 
 import bengal.stm.STM
-import bengal.stm.model._
-import bengal.stm.syntax.all._
+import bengal.stm.model.*
+import bengal.stm.syntax.all.*
 
 import cats.effect.IO
 import cats.effect.testing.scalatest.AsyncIOSpec
@@ -76,8 +76,8 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
 
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        txnVarTest              <- TxnVar.of(11)
-        txnVarMapTest           <- TxnVarMap.of(Map("foo" -> 5, "bar" -> 1))
+        txnVarTest    <- TxnVar.of(11)
+        txnVarMapTest <- TxnVarMap.of(Map("foo" -> 5, "bar" -> 1))
         result <- for {
                     result2f <- program2(txnVarTest, txnVarMapTest).commit.start
                     result1f <- program1(txnVarTest, txnVarMapTest).commit.start
@@ -109,8 +109,8 @@ class StmRuntimeSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
 
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        txnVarQueue             <- TxnVar.of(Queue[Int]())
-        txnVar                  <- TxnVar.of(0)
+        txnVarQueue <- TxnVar.of(Queue[Int]())
+        txnVar      <- TxnVar.of(0)
         result <- for {
                     result1f    <- program1(txnVarQueue, txnVar).commit.start
                     result2f    <- program2(txnVarQueue).commit.start

@@ -31,8 +31,8 @@ class TxnVarSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
     "return the value of a transactional variable" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVar                    <- TxnVar.of(123)
-        result                  <- tVar.get.commit
+        tVar   <- TxnVar.of(123)
+        result <- tVar.get.commit
       } yield result).asserting(_ shouldBe 123)
     }
   }
@@ -41,9 +41,9 @@ class TxnVarSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
     "update the value of a transactional variable" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVar                    <- TxnVar.of(123)
-        _                       <- tVar.set(2718).commit
-        result                  <- tVar.get.commit
+        tVar   <- TxnVar.of(123)
+        _      <- tVar.set(2718).commit
+        result <- tVar.get.commit
       } yield result).asserting(_ shouldBe 2718)
     }
   }
@@ -52,9 +52,9 @@ class TxnVarSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
     "modify the value of a transactional variable" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVar                    <- TxnVar.of("foo")
-        _                       <- tVar.modify(_ + "bar").commit
-        result                  <- tVar.get.commit
+        tVar   <- TxnVar.of("foo")
+        _      <- tVar.modify(_ + "bar").commit
+        result <- tVar.get.commit
       } yield result).asserting(_ shouldBe "foobar")
     }
   }

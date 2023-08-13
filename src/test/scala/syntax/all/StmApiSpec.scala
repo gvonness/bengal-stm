@@ -18,8 +18,8 @@ package ai.entrolution
 package syntax.all
 
 import bengal.stm.STM
-import bengal.stm.model._
-import bengal.stm.syntax.all._
+import bengal.stm.model.*
+import bengal.stm.syntax.all.*
 
 import cats.effect.IO
 import cats.effect.testing.scalatest.AsyncIOSpec
@@ -32,7 +32,7 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
     "yield argument value" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        result                  <- STM[IO].delay("foo").commit
+        result <- STM[IO].delay("foo").commit
       } yield result).asserting(_ shouldBe "foo")
     }
   }
@@ -41,7 +41,7 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
     "yield argument value" in {
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        result                  <- STM[IO].pure("foo").commit
+        result <- STM[IO].pure("foo").commit
       } yield result).asserting(_ shouldBe "foo")
     }
   }
@@ -76,7 +76,7 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
 
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
+        tVarMap <- TxnVarMap.of(baseMap)
         result <- (for {
                     innerResult <- tVarMap.get("foo")
                     _           <- tVarMap.modify("foo", _ + 3)
@@ -105,7 +105,7 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
 
       (for {
         case implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVar                    <- TxnVar.of(1)
+        tVar <- TxnVar.of(1)
         result <- for {
                     resFib      <- program1(tVar).commit.start
                     _           <- program2(tVar).commit.start
