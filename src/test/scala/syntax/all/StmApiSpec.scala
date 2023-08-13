@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2023 Greg von Nessi
+ * Copyright 2023 Greg von Nessi
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package ai.entrolution
 package syntax.all
 
 import bengal.stm.STM
-import bengal.stm.model._
-import bengal.stm.syntax.all._
+import bengal.stm.model.*
+import bengal.stm.syntax.all.*
 
 import cats.effect.IO
 import cats.effect.testing.scalatest.AsyncIOSpec
@@ -31,8 +31,8 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
   "delay" - {
     "yield argument value" in {
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        result                  <- STM[IO].delay("foo").commit
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        result <- STM[IO].delay("foo").commit
       } yield result).asserting(_ shouldBe "foo")
     }
   }
@@ -40,8 +40,8 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
   "pure" - {
     "yield argument value" in {
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        result                  <- STM[IO].pure("foo").commit
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        result <- STM[IO].pure("foo").commit
       } yield result).asserting(_ shouldBe "foo")
     }
   }
@@ -49,7 +49,7 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
   "raiseError" - {
     "throw an error when run" in {
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
         result <-
           STM[IO].abort(new RuntimeException("test error")).commit.attempt
       } yield result)
@@ -62,7 +62,7 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
       val mockError = new RuntimeException("mock error")
 
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
         result <- STM[IO]
                     .abort(mockError)
                     .flatMap(_ => STM[IO].delay("test"))
@@ -75,8 +75,8 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
       val baseMap = Map("foo" -> 42, "bar" -> 27, "baz" -> 18)
 
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVarMap                 <- TxnVarMap.of(baseMap)
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        tVarMap <- TxnVarMap.of(baseMap)
         result <- (for {
                     innerResult <- tVarMap.get("foo")
                     _           <- tVarMap.modify("foo", _ + 3)
@@ -104,8 +104,8 @@ class StmApiSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
         input.set(5)
 
       (for {
-        implicit0(stm: STM[IO]) <- STM.runtime[IO]
-        tVar                    <- TxnVar.of(1)
+        case implicit0(stm: STM[IO]) <- STM.runtime[IO]
+        tVar <- TxnVar.of(1)
         result <- for {
                     resFib      <- program1(tVar).commit.start
                     _           <- program2(tVar).commit.start
