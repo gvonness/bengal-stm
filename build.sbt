@@ -1,31 +1,17 @@
-ThisBuild / baseVersion := "0.9.4"
+ThisBuild / tlBaseVersion := "0.9"
 
 ThisBuild / organization      := "ai.entrolution"
-ThisBuild / organizationName  := "Greg von Nessi"
-ThisBuild / publishGithubUser := "gvonness"
-ThisBuild / publishFullName   := "Greg von Nessi"
-
-ThisBuild / homepage := Some(url("https://github.com/gvonness/bengal-stm"))
-ThisBuild / scmInfo := Some(
-  ScmInfo(url("https://github.com/gvonness/bengal-stm"), "git@github.com:gvonness/bengal-stm.git")
+ThisBuild / organizationName  := "Entrolution"
+ThisBuild / startYear := Some(2023)
+ThisBuild / licenses := Seq(License.Apache2)
+ThisBuild / developers ++= List(
+  tlGitHubDev("gvonness", "Greg von Nessi")
 )
-
-ThisBuild / startYear := Some(2020)
-ThisBuild / endYear   := Some(2023)
-
-ThisBuild / spiewakCiReleaseSnapshots := false
-ThisBuild / spiewakMainBranches       := Seq("main")
-
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
 
 ThisBuild / scalaVersion := DependencyVersions.scala2p13Version
 ThisBuild / crossScalaVersions := Seq(
   DependencyVersions.scala2p13Version
 )
-
-Global / idePackagePrefix := Some("ai.entrolution")
-Global / excludeLintKeys += idePackagePrefix
 
 lazy val commonSettings = Seq(
   scalaVersion := DependencyVersions.scala2p13Version,
@@ -43,12 +29,8 @@ lazy val commonSettings = Seq(
 )
 
 lazy val bengalStm = (project in file("."))
-  .enablePlugins(SonatypeCiReleasePlugin)
   .settings(
     commonSettings,
     name := "bengal-stm",
-    libraryDependencies ++= Dependencies.bengalStm,
-    crossScalaVersions := Seq(
-      DependencyVersions.scala2p13Version
-    )
+    libraryDependencies ++= Dependencies.bengalStm
   )
