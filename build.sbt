@@ -1,7 +1,7 @@
 ThisBuild / tlBaseVersion := "0.9"
 
 ThisBuild / organization      := "ai.entrolution"
-ThisBuild / organizationName  := "Entrolution"
+ThisBuild / organizationName  := "Greg von Nessi"
 ThisBuild / startYear := Some(2023)
 ThisBuild / licenses := Seq(License.Apache2)
 ThisBuild / developers ++= List(
@@ -12,6 +12,9 @@ ThisBuild / scalaVersion := DependencyVersions.scala2p13Version
 ThisBuild / crossScalaVersions := Seq(
   DependencyVersions.scala2p13Version
 )
+
+Global / idePackagePrefix := Some("ai.entrolution")
+Global / excludeLintKeys += idePackagePrefix
 
 lazy val commonSettings = Seq(
   scalaVersion := DependencyVersions.scala2p13Version,
